@@ -1,8 +1,10 @@
-# hermes-agent-desktop-arch
+# hermes-agent-desktop-bin
 
 Prebuilt Arch Linux binary package for the [Hermes Agent desktop app](https://github.com/NousResearch/hermes-agent) (Nous Research).
 
 Builds the upstream source tag once in GitHub Actions (archlinux container) and ships the finished `.pkg.tar.zst` — **nothing is compiled on the installing machine**.
+
+Plan: later submit as AUR package `hermes-agent-desktop-bin` (this repo hosts the build artifacts; AUR PKGBUILD references the versioned GitHub Release asset, vscodium-bin-style).
 
 ## Status
 
