@@ -59,3 +59,40 @@ jobs:
           name: pkg
           path: '*.pkg.tar.zst'
           if-no-files-found: error
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: build
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install runtime deps + xvfb
+        run: |
+          pacman -Syu --noconfirm --needed \
+            curl git hicolor-icon-theme libnotify libsecret xdg-utils \
+            electron42 xvfb
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pkg
+          path: pkg
+
+      - name: Install built package (no compile happens here)
+        run: pacman -U --noconfirm pkg/*.pkg.tar.zst
+
+      - name: Boot smoke test under xvfb
+        run: |
+          mkdir -p /root/.config
+          printf '%s\n' '--no-sandbox' > /root/.config/hermes-desktop-flags.conf
+          set +e
+          timeout 40 xvfb-run -a -s '-screen 0 1280x1024x24' \
+            hermes-desktop > /tmp/hermes-boot.log 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -eq 124 ]; then
+            echo "SMOKE-OK: app still running after 40s (killed by timeout)"
+          else
+            echo "SMOKE-FAIL: exited with rc=$rc"
+            tail -n 60 /tmp/hermes-boot.log
+            exit 1
+          fi
