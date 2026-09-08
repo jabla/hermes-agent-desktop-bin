@@ -33,9 +33,14 @@ jobs:
         if: github.event_name == 'schedule'
         env:
           PUSH: '1'
-        run: python3 scripts/bump-pkgbuild.py
+        run: |
+          OUT=$(python3 scripts/bump-pkgbuild.py)
+          echo "$OUT"
+          echo "$OUT" | grep -q '^BUMPED$' && echo "bumped=1" >> "$GITHUB_ENV" || true
 
       - name: Build package (non-root makepkg)
+        # manual dispatch always builds; scheduled runs only after a real bump
+        if: github.event_name == 'workflow_dispatch' || env.bumped == '1'
         run: |
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"

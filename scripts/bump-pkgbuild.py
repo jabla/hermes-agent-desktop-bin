@@ -63,6 +63,7 @@ def main() -> int:
                  f"sha256sums=('{checksum}'", pkg)
     open("PKGBUILD", "w").write(pkg)
     print("PKGBUILD bumped")
+    print("BUMPED")
 
     if os.environ.get("PUSH") == "1":
         subprocess.run(["git", "config", "user.email",
