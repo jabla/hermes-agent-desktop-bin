@@ -1,12 +1,12 @@
 # Maintainer: nullptr <nullptr@null.ptr>
-pkgname=hermes-agent-desktop
+pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
 _pkgver_tag=v2026.9.7
 _commit=2237be355906fbe6065ce1815711eee52b2d646e
 pkgver=0.21.1
 pkgrel=1
-pkgdesc="Official Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime."
+pkgdesc="Official Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
 url='https://github.com/NousResearch/hermes-agent'
 license=('MIT')
@@ -18,7 +18,7 @@ optdepends=(
   'libayatana-appindicator: tray indicator support'
 )
 makedepends=('nodejs>=22.22' 'npm' 'python')
-conflicts=('hermes-agent-desktop-bin')
+conflicts=('hermes-agent-desktop')
 options=('!debug')
 source=(
   "hermes-agent-${_pkgver_tag}.tar.gz::${url}/archive/refs/tags/${_pkgver_tag}.tar.gz"

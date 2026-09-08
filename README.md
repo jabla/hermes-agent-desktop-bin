@@ -8,10 +8,10 @@ Builds the upstream source tag once in GitHub Actions (archlinux container) and 
 
 Work in progress (private). Current state:
 
-- [x] PKGBUILD tracking upstream tag `v2026.9.7` (Hermes Agent v0.21.1)
+- [x] PKGBUILD tracking upstream tag `v2026.9.7` (Hermes Agent v0.21.1), package name `hermes-agent-desktop-bin` (conflicts with AUR `hermes-agent-desktop`)
 - [x] CI build: `makepkg` in `archlinux:latest` container, non-root
+- [x] boot smoke test of the built package (xvfb, headless + real desktop on 2nd laptop)
 - [ ] package repo / release publishing (next step)
-- [ ] boot smoke test of the built package (xvfb, headless)
 
 ## Layout
 
