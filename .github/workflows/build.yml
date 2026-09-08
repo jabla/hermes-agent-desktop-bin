@@ -1,0 +1,56 @@
+name: build-package
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild even if PKGBUILD already tracks the latest upstream tag'
+        type: boolean
+        default: false
+  schedule:
+    # daily check for new upstream tags (release cadence is ~weekly)
+    - cron: '23 3 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install build toolchain (Arch container)
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git curl \
+            nodejs npm python \
+            electron42 hicolor-icon-theme libnotify libsecret xdg-utils
+
+      - uses: actions/checkout@v4
+
+      - name: Bump PKGBUILD to new upstream tag (schedules only)
+        if: github.event_name == 'schedule'
+        env:
+          PUSH: '1'
+        run: python3 scripts/bump-pkgbuild.py
+
+      - name: Build package (non-root makepkg)
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          # --nocheck: headless container has no display; upstream runs the full
+          # typecheck/vitest suite in its own CI. Packaging correctness is
+          # validated separately by a boot smoke test.
+          runuser -u builder -- makepkg -f --noconfirm --nocheck
+
+      - name: Show result
+        run: ls -lh "$GITHUB_WORKSPACE"/*.pkg.tar.zst
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg
+          path: '*.pkg.tar.zst'
+          if-no-files-found: error
