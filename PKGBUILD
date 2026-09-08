@@ -143,13 +143,18 @@ package() {
     find "${resources}" -maxdepth 2 -printf '%M %p\n' 2>/dev/null || true
     return 1
   fi
-  install -dm755 "${pkgdir}/usr/lib/${pkgname}"
+  # Install dir stays version-independent of pkgname: the launcher below and
+  # the packaged app reference /usr/lib/hermes-agent-desktop by path. The
+  # conflicts=() entry guarantees only one variant (source or -bin) is
+  # installed, so a fixed dir cannot collide.
+  local libdir="/usr/lib/hermes-agent-desktop"
+  install -dm755 "${pkgdir}${libdir}"
   install -Dm644 "${resources}/app.asar" \
-    "${pkgdir}/usr/lib/${pkgname}/app.asar"
+    "${pkgdir}${libdir}/app.asar"
   cp -a "${resources}/app.asar.unpacked" \
-    "${pkgdir}/usr/lib/${pkgname}/app.asar.unpacked"
+    "${pkgdir}${libdir}/app.asar.unpacked"
   install -Dm644 "${resources}/install-stamp.json" \
-    "${pkgdir}/usr/lib/${pkgname}/install-stamp.json"
+    "${pkgdir}${libdir}/install-stamp.json"
   # One Electron/Chromium argument per line. Blank lines and full-line comments
   # are ignored; the file is data, never sourced or evaluated as shell code.
   install -Dm755 /dev/stdin "${pkgdir}/usr/bin/${_pkgname}" <<'EOF'
