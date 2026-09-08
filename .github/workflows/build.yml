@@ -82,8 +82,8 @@ jobs:
 
       - name: Boot smoke test under xvfb
         run: |
-          mkdir -p /root/.config
-          printf '%s\n' '--no-sandbox' > /root/.config/hermes-desktop-flags.conf
+          mkdir -p "$HOME/.config"
+          printf '%s\n' '--no-sandbox' > "$HOME/.config/hermes-desktop-flags.conf"
           set +e
           timeout 40 xvfb-run -a -s '-screen 0 1280x1024x24' \
             hermes-desktop > /tmp/hermes-boot.log 2>&1
