@@ -96,3 +96,33 @@ jobs:
             tail -n 60 /tmp/hermes-boot.log
             exit 1
           fi
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build, smoke]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pkg
+          path: pkg
+
+      - name: Create GitHub Release (skip if tag exists)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PKGVER=$(grep -oP '(?<=^pkgver=).*' PKGBUILD)
+          PKGREL=$(grep -oP '(?<=^pkgrel=).*' PKGBUILD)
+          UPSTREAM=$(grep -oP '(?<=^_pkgver_tag=).*' PKGBUILD)
+          TAG="v${PKGVER}-${PKGREL}"
+          FILE=$(ls pkg/*.pkg.tar.zst)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, skipping"
+          else
+            gh release create "$TAG" "$FILE" \
+              --title "hermes-agent-desktop-bin ${PKGVER}-${PKGREL}" \
+              --notes "Prebuilt Arch package from upstream source tag ${UPSTREAM}. Install with: yay -U ${FILE}"
+            echo "Release created: $TAG"
+          fi
