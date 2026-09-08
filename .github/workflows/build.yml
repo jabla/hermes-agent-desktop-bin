@@ -70,7 +70,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             curl git hicolor-icon-theme libnotify libsecret xdg-utils \
-            electron42 xvfb
+            electron42 xorg-xvfb
 
       - uses: actions/download-artifact@v4
         with:
