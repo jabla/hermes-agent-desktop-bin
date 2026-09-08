@@ -14,7 +14,7 @@ Work in progress (private). Current state:
 - [x] CI build: `makepkg` in `archlinux:latest` container, non-root
 - [x] boot smoke test of the built package (xvfb, headless + real desktop on 2nd laptop)
 - [x] GitHub Release publishing after green build+smoke (tag `v<pkgver>-<pkgrel>`)
-- [ ] AUR `hermes-agent-desktop-bin` submission — needs public repo first (release assets are 404 anonymously while private)
+- [x] AUR package [hermes-agent-desktop-bin](https://aur.archlinux.org/packages/hermes-agent-desktop-bin) live — wrapper PKGBUILD references the versioned Release asset (vscodium-style, sha256 pinned)
 
 ## Layout
 
