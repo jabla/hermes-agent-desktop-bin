@@ -1,66 +1,22 @@
 # hermes-agent-desktop-bin
 
-Prebuilt Arch Linux package for the [Hermes Agent desktop app](https://github.com/NousResearch/hermes-agent) (Nous Research).
-
-The upstream source is built **once** in GitHub Actions (archlinux container). The finished `.pkg.tar.zst` is published as a GitHub Release — **nothing is compiled on the installing machine**.
+Prebuilt Arch Linux package for the [Hermes Agent desktop app](https://github.com/NousResearch/hermes-agent) (Nous Research). **Nothing is compiled at install time**: GitHub Actions builds the app once per upstream release — reusing Arch's `electron42` runtime instead of bundling Electron — and publishes the finished `.pkg.tar.zst`; the AUR `-bin` wrapper just downloads and extracts it.
 
 ## Install
-
-From the [AUR](https://aur.archlinux.org/packages/hermes-agent-desktop-bin) (recommended):
 
 ```bash
 yay -S hermes-agent-desktop-bin
 ```
 
-Or directly from the [GitHub Releases](https://github.com/jabla/hermes-agent-desktop-bin/releases) of this repo:
+This replaces the source package `hermes-agent-desktop` (they conflict). Launcher: `hermes-desktop`.
 
-```bash
-yay -U https://github.com/jabla/hermes-agent-desktop-bin/releases/download/<tag>/hermes-agent-desktop-bin-<ver>-x86_64.pkg.tar.zst
-```
+## How it works
 
-The package conflicts with the AUR source package `hermes-agent-desktop` (installing one removes the other). The launcher is `hermes-desktop`, reusing the system `electron42` runtime.
-
-## How updates work (fully automated)
-
-```
-upstream release (NousResearch/hermes-agent)
-  → daily cron detects new tag
-  → bump job opens PR "chore: bump to <tag>" (never commits to main directly)
-  → required checks on the PR: build + xvfb boot smoke test
-  → auto-merge when green
-  → push to main triggers: build → smoke → GitHub Release v<pkgver>-<pkgrel>
-  → aur-sync job pushes aur/ (wrapper PKGBUILD) to aur.archlinux.org
-  → `yay -Syu` picks up the new version
-```
-
-Bump PRs are opened and auto-merged by the automation. Pull requests from
-humans are reviewed by the maintainer before merging.
-
-## Repository policies
-
-- `main` is protected by a ruleset: pull requests required, status checks
-  `build` + `smoke` mandatory, force-push and branch deletion blocked.
-- Least-privilege tokens: `contents: read` by default, elevated only where
-  needed (bump, release).
-- The AUR secret key is used exclusively by the `aur-sync` job and only runs
-  after a green release on main — never on pull requests.
-
-## Layout
-
-- `PKGBUILD` — build recipe (adapted from AUR `hermes-agent-desktop`, keeps its
-  system-`electron42` patches). Produces the installable package.
-- `aur/PKGBUILD`, `aur/.SRCINFO` — AUR wrapper package (single source of truth;
-  references the versioned GitHub Release asset, sha256 pinned). CI validates
-  `.SRCINFO` against the PKGBUILD.
-- `scripts/bump-pkgbuild.py` — bump automation: detects the latest upstream
-  release, updates both PKGBUILDs + `.SRCINFO`, opens the auto-merge PR
-  (`--pr`); without `--pr` it is a dry run.
-- `.github/workflows/build.yml` — the whole pipeline (bump, build, smoke,
-  release, aur-sync).
+- `PKGBUILD` — the *build* recipe, run in CI (archlinux container, non-root makepkg). Builds the app against the system `electron42` runtime, so the package stays small instead of shipping Electron.
+- `aur/PKGBUILD` — the AUR *wrapper*, source of truth for [hermes-agent-desktop-bin on the AUR](https://aur.archlinux.org/packages/hermes-agent-desktop-bin). Its `source` URL points at the GitHub Release artifact; `package()` only extracts the payload.
+- `scripts/bump-pkgbuild.py` — daily bump automation: detects a new upstream tag, edits both PKGBUILDs + `.SRCINFO`, opens an auto-merge PR.
+- `.github/workflows/build.yml` — `bump` / `build` / `smoke` / `release` / `aur-sync` pipeline.
 
 ## License
 
-- Repository content (PKGBUILDs, scripts, docs): [BSD Zero Clause (0BSD)](LICENSE) — do whatever you want, no warranty, no liability.
-- The packaged application is MIT-licensed by Nous Research (upstream).
-- The AUR `hermes-agent-desktop` PKGBUILD this repo was adapted from is 0BSD (AUR contributors), attribution in the PKGBUILD header.
-
+Repository content: [BSD Zero Clause (0BSD)](LICENSE). The packaged app is MIT (Nous Research).
