@@ -126,7 +126,7 @@ def main() -> int:
 
     branch = f"bump/{tag}"
     gh_repo = os.environ["GH_REPO"]
-    push_url = f"https://x-access-token:{os.environ['GH_TOKEN']}@{gh_repo}.git"
+    push_url = f"https://x-access-token:{os.environ['GH_TOKEN']}@github.com/{gh_repo}.git"
 
     run(["git", "checkout", "-b", branch])
     run(["git", "config", "user.email", "jabla@users.noreply.github.com"])
