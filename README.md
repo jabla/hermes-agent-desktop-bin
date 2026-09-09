@@ -58,6 +58,12 @@ humans are reviewed by the maintainer before merging.
 - `.github/workflows/build.yml` — the whole pipeline (bump, build, smoke,
   release, aur-sync).
 
+## License
+
+- Repository content (PKGBUILDs, scripts, docs): [BSD Zero Clause (0BSD)](LICENSE) — do whatever you want, no warranty, no liability.
+- The packaged application is MIT-licensed by Nous Research (upstream).
+- The AUR `hermes-agent-desktop` PKGBUILD this repo was adapted from is 0BSD (AUR contributors), attribution in the PKGBUILD header.
+
 ## Status
 
 - [x] Package: `hermes-agent-desktop-bin`, tracking upstream (currently 0.21.1-1)
