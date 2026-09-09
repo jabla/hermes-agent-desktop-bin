@@ -1,4 +1,9 @@
-# Maintainer: nullptr <nullptr@null.ptr>
+# Build PKGBUILD for the prebuilt hermes-agent-desktop-bin package.
+# Adapted from the AUR package hermes-agent-desktop (maintainer nullptr,
+# https://aur.archlinux.org/packages/hermes-agent-desktop), including its
+# system-electron42 patches (system-electron-resources.patch,
+# pin-packaged-runtime.patch). The packaged app itself is MIT-licensed
+# (Nous Research).
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
