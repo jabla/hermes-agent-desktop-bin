@@ -1,23 +1,68 @@
 # hermes-agent-desktop-bin
 
-Prebuilt Arch Linux binary package for the [Hermes Agent desktop app](https://github.com/NousResearch/hermes-agent) (Nous Research).
+Prebuilt Arch Linux package for the [Hermes Agent desktop app](https://github.com/NousResearch/hermes-agent) (Nous Research).
 
-Builds the upstream source tag once in GitHub Actions (archlinux container) and ships the finished `.pkg.tar.zst` — **nothing is compiled on the installing machine**.
+The upstream source is built **once** in GitHub Actions (archlinux container). The finished `.pkg.tar.zst` is published as a GitHub Release — **nothing is compiled on the installing machine**.
 
-Plan: later submit as AUR package `hermes-agent-desktop-bin` (this repo hosts the build artifacts; AUR PKGBUILD references the versioned GitHub Release asset, vscodium-bin-style).
+## Install
 
-## Status
+From the [AUR](https://aur.archlinux.org/packages/hermes-agent-desktop-bin) (recommended):
 
-Work in progress (private). Current state:
+```bash
+yay -S hermes-agent-desktop-bin
+```
 
-- [x] PKGBUILD tracking upstream tag `v2026.9.7` (Hermes Agent v0.21.1), package name `hermes-agent-desktop-bin` (conflicts with AUR `hermes-agent-desktop`)
-- [x] CI build: `makepkg` in `archlinux:latest` container, non-root
-- [x] boot smoke test of the built package (xvfb, headless + real desktop on 2nd laptop)
-- [x] GitHub Release publishing after green build+smoke (tag `v<pkgver>-<pkgrel>`)
-- [x] AUR package [hermes-agent-desktop-bin](https://aur.archlinux.org/packages/hermes-agent-desktop-bin) live — wrapper PKGBUILD references the versioned Release asset (vscodium-style, sha256 pinned)
+Or directly from the [GitHub Releases](https://github.com/jabla/hermes-agent-desktop-bin/releases) of this repo:
+
+```bash
+yay -U https://github.com/jabla/hermes-agent-desktop-bin/releases/download/<tag>/hermes-agent-desktop-bin-<ver>-x86_64.pkg.tar.zst
+```
+
+The package conflicts with the AUR source package `hermes-agent-desktop` (installing one removes the other). The launcher is `hermes-desktop`, reusing the system `electron42` runtime.
+
+## How updates work (fully automated)
+
+```
+upstream release (NousResearch/hermes-agent)
+  → daily cron detects new tag
+  → bump job opens PR "chore: bump to <tag>" (never commits to main directly)
+  → required checks on the PR: build + xvfb boot smoke test
+  → auto-merge when green
+  → push to main triggers: build → smoke → GitHub Release v<pkgver>-<pkgrel>
+  → aur-sync job pushes aur/ (wrapper PKGBUILD) to aur.archlinux.org
+  → `yay -Syu` picks up the new version
+```
+
+Bump PRs are opened and auto-merged by the automation. Pull requests from
+humans are reviewed by the maintainer before merging.
+
+## Repository policies
+
+- `main` is protected by a ruleset: pull requests required, status checks
+  `build` + `smoke` mandatory, force-push and branch deletion blocked.
+- Least-privilege tokens: `contents: read` by default, elevated only where
+  needed (bump, release).
+- The AUR secret key is used exclusively by the `aur-sync` job and only runs
+  after a green release on main — never on pull requests.
 
 ## Layout
 
-- `PKGBUILD` — adapted from [AUR hermes-agent-desktop](https://aur.archlinux.org/packages/hermes-agent-desktop), same electron42 system-runtime patches
-- `scripts/bump-pkgbuild.py` — auto-bump to latest upstream release tag (used by the scheduled workflow)
-- `.github/workflows/build.yml` — build on `workflow_dispatch`, daily tag check on schedule
+- `PKGBUILD` — build recipe (adapted from AUR `hermes-agent-desktop`, keeps its
+  system-`electron42` patches). Produces the installable package.
+- `aur/PKGBUILD`, `aur/.SRCINFO` — AUR wrapper package (single source of truth;
+  references the versioned GitHub Release asset, sha256 pinned). CI validates
+  `.SRCINFO` against the PKGBUILD.
+- `scripts/bump-pkgbuild.py` — bump automation: detects the latest upstream
+  release, updates both PKGBUILDs + `.SRCINFO`, opens the auto-merge PR
+  (`--pr`); without `--pr` it is a dry run.
+- `.github/workflows/build.yml` — the whole pipeline (bump, build, smoke,
+  release, aur-sync).
+
+## Status
+
+- [x] Package: `hermes-agent-desktop-bin`, tracking upstream (currently 0.21.1-1)
+- [x] CI build in archlinux container, non-root makepkg
+- [x] Boot smoke test (xvfb, headless; verified on a real desktop)
+- [x] GitHub Release publishing after green build + smoke
+- [x] AUR package live, `yay -Syu`-compatible
+- [x] Branch protection + PR-only flow
