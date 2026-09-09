@@ -64,11 +64,3 @@ humans are reviewed by the maintainer before merging.
 - The packaged application is MIT-licensed by Nous Research (upstream).
 - The AUR `hermes-agent-desktop` PKGBUILD this repo was adapted from is 0BSD (AUR contributors), attribution in the PKGBUILD header.
 
-## Status
-
-- [x] Package: `hermes-agent-desktop-bin`, tracking upstream (currently 0.21.1-1)
-- [x] CI build in archlinux container, non-root makepkg
-- [x] Boot smoke test (xvfb, headless; verified on a real desktop)
-- [x] GitHub Release publishing after green build + smoke
-- [x] AUR package live, `yay -Syu`-compatible
-- [x] Branch protection + PR-only flow
