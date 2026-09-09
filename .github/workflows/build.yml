@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
+    outputs:
+      built: ${{ steps.gate.outputs.built }}
     steps:
       - name: Install build toolchain (Arch container)
         run: |
@@ -38,6 +40,13 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q '^BUMPED$' && echo "bumped=1" >> "$GITHUB_ENV" || true
 
+      - name: Gate — did this run produce a package?
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${bumped:-}" = "1" ]; then
+            echo "built=1" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build package (non-root makepkg)
         # manual dispatch always builds; scheduled runs only after a real bump
         if: github.event_name == 'workflow_dispatch' || env.bumped == '1'
@@ -51,9 +60,11 @@ jobs:
           runuser -u builder -- makepkg -f --noconfirm --nocheck
 
       - name: Show result
+        if: github.event_name == 'workflow_dispatch' || env.bumped == '1'
         run: ls -lh "$GITHUB_WORKSPACE"/*.pkg.tar.zst
 
       - name: Upload package artifact
+        if: github.event_name == 'workflow_dispatch' || env.bumped == '1'
         uses: actions/upload-artifact@v4
         with:
           name: pkg
@@ -63,6 +74,7 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     needs: build
+    if: needs.build.outputs.built == '1'
     container:
       image: archlinux:latest
     steps:
@@ -100,6 +112,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     needs: [build, smoke]
+    if: needs.build.outputs.built == '1'
     steps:
       - uses: actions/checkout@v4
 
