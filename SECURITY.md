@@ -18,7 +18,7 @@ vulnerabilities there.
 
 - Builds run in a fresh `archlinux:latest` container per run; the base image
   is not pinned to a digest (rolling distro).
-- Third-party GitHub Actions are the official `actions/*` at major tags.
+- GitHub Actions are pinned to commit SHAs (official `actions/*`), kept current by Dependabot (weekly, grouped).
 - The `AUR_SSH_KEY` secret is a dedicated, low-scope deploy key used only by
   the `aur-sync` job; it runs exclusively after a green release on `main`,
   never on pull requests.
