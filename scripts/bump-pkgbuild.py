@@ -64,6 +64,42 @@ def edit_pkgbuild(path: str, tag: str, version: str, commit: str, checksum: str)
     open(path, "w").write(pkg)
 
 
+def sync_local_source_sums(path: str) -> list[str]:
+    """Refresh the sha256sums entries of LOCAL files in source=() (the patches).
+
+    The bump only maintains the tarball checksum. Editing a patch otherwise
+    leaves its sum stale and the build dies much later at "Validating source
+    files with sha256sums ... <patch> ... FAILED".
+    """
+    pkg = open(path).read()
+    src = re.search(r"(?ms)^source=\((.*?)^\)", pkg)
+    sums = re.search(r"(?ms)^sha256sums=\((.*?)\)[ \t]*$", pkg)
+    if not src or not sums:
+        sys.exit(f"cannot locate source=/sha256sums= in {path}")
+    entries = [e.strip().strip("'\"")
+               for e in re.split(r"\s+", src.group(1).strip()) if e.strip()]
+    old = re.findall(r"'([0-9a-f]{64})'", sums.group(1))
+    if len(entries) != len(old):
+        sys.exit(f"{path}: {len(entries)} source entries but {len(old)} checksums")
+    base = os.path.dirname(os.path.abspath(path))
+    block = sums.group(1)
+    changed = []
+    for entry, old_sum in zip(entries, old):
+        if "://" in entry or "::" in entry:
+            continue                     # remote source, handled by the bump
+        if not os.path.isfile(os.path.join(base, entry)):
+            sys.exit(f"{path}: local source {entry!r} does not exist")
+        new_sum = hashlib.sha256(open(os.path.join(base, entry), "rb").read()).hexdigest()
+        if new_sum != old_sum:
+            # A hash is as long as any other hash, so replacing it in place
+            # keeps the PKGBUILD layout (one sum per line, indent) intact.
+            block = block.replace(old_sum, new_sum, 1)
+            changed.append(f"{entry}: {old_sum[:8]}… -> {new_sum[:8]}…")
+    if changed:
+        open(path, "w").write(pkg[:sums.start(1)] + block + pkg[sums.end(1):])
+    return changed
+
+
 def edit_aur_pkgbuild(path: str, version: str):
     """Edit the AUR wrapper PKGBUILD (no _pkgver_tag/_commit; source URL is
     variable-driven and follows pkgver/pkgrel automatically).
@@ -149,6 +185,8 @@ def main() -> int:
         return 0
 
     edit_pkgbuild("PKGBUILD", tag, version, commit, checksum)
+    for line in sync_local_source_sums("PKGBUILD"):
+        print("source checksum refreshed:", line)
     edit_aur_pkgbuild("aur/PKGBUILD", version)
     regen_srcinfo("aur")
 
