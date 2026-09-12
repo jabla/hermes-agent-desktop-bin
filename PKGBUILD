@@ -30,9 +30,12 @@ source=(
   'system-electron-resources.patch'
   'pin-packaged-runtime.patch'
 )
+# NOTE: makepkg also validates the patch files. Only the tarball sum is
+# maintained by the bump automation — refresh a patch sum by hand whenever the
+# patch file changes, or the build fails at "Validating source files".
 sha256sums=('bf45fc6c40ad770e30dfa7677ee6804a24be1a7eab768b283a0883c64662d76e'
             'ee465a1aa2ad5789fa5c7b3a89993bbf0e68efddbf27c93109519b72a4cb90f7'
-            'a071a452caf08b4b5d7cfb93289b82051a4fa696adda826deaa4281c592fad21')
+            '7076b57073bb62d7b722de41574bf709c5c7674c3a35eb465904e4fa08751a46')
 
 # NOTE: ${srcdir} is empty at the top level of a PKGBUILD — makepkg only sets
 # it inside the function scope of prepare()/build()/package(). Computing the
