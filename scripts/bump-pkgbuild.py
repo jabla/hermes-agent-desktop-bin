@@ -8,6 +8,8 @@ Two modes:
 
 Exits 0 without changes when PKGBUILD already tracks the latest upstream tag.
 Requires: gh (GH_TOKEN + GH_REPO env), makepkg available for .SRCINFO regen.
+Must not run as root: makepkg refuses to run as root, so the container job
+runs this script through runuser as an unprivileged user.
 """
 import argparse
 import hashlib
@@ -68,7 +70,18 @@ def edit_aur_pkgbuild(path: str, version: str):
     open(path, "w").write(pkg)
 
 
+def require_non_root():
+    """makepkg refuses to run as root — fail before anything is written."""
+    if os.geteuid() == 0:
+        sys.exit(
+            "refusing to run as root: makepkg (used to regenerate aur/.SRCINFO) "
+            "will not run as root. Run this script as an unprivileged user — "
+            "see the 'bump' job in .github/workflows/build.yml."
+        )
+
+
 def regen_srcinfo(aur_dir: str):
+    require_non_root()
     r = run(["makepkg", "--printsrcinfo"], cwd=aur_dir)
     if r.returncode != 0:
         print("makepkg --printsrcinfo failed:", r.stderr)
@@ -86,6 +99,8 @@ def main() -> int:
     ap.add_argument("--pr", action="store_true",
                     help="push bump branch and open auto-merge PR")
     args = ap.parse_args()
+
+    require_non_root()
 
     rel = api(f"/repos/{REPO}/releases/latest")
     tag = rel["tag_name"]
@@ -132,7 +147,9 @@ def main() -> int:
     gh_repo = os.environ["GH_REPO"]
     push_url = f"https://x-access-token:{os.environ['GH_TOKEN']}@github.com/{gh_repo}.git"
 
-    run(["git", "checkout", "-b", branch])
+    # -B (not -b): a previous run may have left the branch behind after
+    # failing further down, and re-runs must not die on "branch exists".
+    run(["git", "checkout", "-B", branch])
     run(["git", "config", "user.email", "jabla@users.noreply.github.com"])
     run(["git", "config", "user.name", "hermes-agent-desktop-bin CI"])
     run(["git", "add", "PKGBUILD", "aur/PKGBUILD", "aur/.SRCINFO"])
@@ -140,7 +157,9 @@ def main() -> int:
     if r.returncode != 0:
         print("commit failed:", r.stderr)
         return 1
-    r = run(["git", "push", "-u", push_url, f"HEAD:{branch}"])
+    # --force-safe: this branch is owned by the bump job and only ever carries
+    # this one bump commit; retries after a partial run must be able to reset it.
+    r = run(["git", "push", "--force", "-u", push_url, f"HEAD:{branch}"])
     if r.returncode != 0:
         print("push failed:", r.stderr)
         return 1
