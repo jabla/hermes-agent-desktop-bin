@@ -7,9 +7,9 @@
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
-_pkgver_tag=v2026.9.7
-_commit=2237be355906fbe6065ce1815711eee52b2d646e
-pkgver=0.21.1
+_pkgver_tag=v2026.9.11
+_commit=939e45c91d751fadd94dcd1b873ac3cb44846213
+pkgver=0.21.2
 pkgrel=1
 pkgdesc="Official Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
