@@ -22,6 +22,7 @@ import urllib.request
 
 REPO = "NousResearch/hermes-agent"
 FIELDS = ("_pkgver_tag", "_commit", "pkgver", "pkgrel", "sha256sums")
+SHA_RE = re.compile(r"^sha256sums=\('([0-9a-f]{64})'", re.M)
 
 
 def api(path: str):
@@ -50,8 +51,16 @@ def edit_pkgbuild(path: str, tag: str, version: str, commit: str, checksum: str)
     pkg = re.sub(r"(?m)^_commit=.*$", f"_commit={commit}", pkg)
     pkg = re.sub(r"(?m)^pkgver=.*$", f"pkgver={version}", pkg)
     pkg = re.sub(r"(?m)^pkgrel=.*$", "pkgrel=1", pkg)
-    pkg = re.sub(r"(?m)^sha256sums=\(\('[0-9a-f]{64}'",
-                 f"sha256sums=('{checksum}'", pkg)
+    # The pattern here used to be `sha256sums=\('\('…`, which can never match:
+    # the substitution silently did nothing and the build then failed at makepkg
+    # with "Validating source files with sha256sums ... FAILED" because the
+    # previous release's checksum was still in the PKGBUILD.
+    pkg = SHA_RE.sub(f"sha256sums=('{checksum}'", pkg)
+    # Fail loudly if any field stopped matching, instead of shipping the old value.
+    for field in (f"_pkgver_tag={tag}", f"_commit={commit}", f"pkgver={version}",
+                  f"sha256sums=('{checksum}'"):
+        if field not in pkg:
+            sys.exit(f"failed to write {field!r} into {path}")
     open(path, "w").write(pkg)
 
 
