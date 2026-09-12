@@ -17,6 +17,13 @@ This replaces the source package `hermes-agent-desktop` (they conflict). Launche
 - `scripts/bump-pkgbuild.py` — bump automation, runs every 2 hours: detects a new upstream tag, edits both PKGBUILDs + `.SRCINFO`, opens an auto-merge PR.
 - `.github/workflows/build.yml` — `bump` / `build` / `smoke` / `release` / `aur-sync` pipeline.
 
+## Maintenance
+
+- **New upstream release**: the scheduled `bump` job checks every 2 hours, moves `PKGBUILD` to the new tag (tag, commit, source checksum), updates `aur/PKGBUILD` and `.SRCINFO`, and opens an auto-merge PR. It authenticates with the `BUMP_TOKEN` secret — a fine-grained PAT (Contents + Pull requests: read/write) — because the default `GITHUB_TOKEN` produces a bot-authored PR whose checks need manual approval and whose merge never triggers the release pipeline. The job logs the token identity it used and fails instead of degrading silently; renew the PAT before it expires.
+- **Pipeline**: `build` → `smoke` → `release` → `aur-sync`. The first two also run on pull requests (merge gate); `release` writes notes linking the upstream release and the upstream compare view, and `aur-sync` injects the released artifact's sha256 into `aur/` before pushing to the AUR. Upstream tag and commit are pinned in `PKGBUILD` (`_pkgver_tag`, `_commit`).
+- **Upstream drift in a patch**: if upstream touches the patched sources, `prepare()` stops with a `.rej`. Regenerate the hunk against the new tag and land it *together with* the version bump — a patch written for a release the `PKGBUILD` does not build leaves `main` unbuildable. The bump keeps the checksums of the local patch files in sync on its own.
+- **AUR wrapper**: only `pkgver`/`pkgrel` are bumped there; its `sha256sums` is the release artifact's, computed after the build by `aur-sync` (a local `makepkg` yields a different hash).
+
 ## License
 
 Repository content: [BSD Zero Clause (0BSD)](LICENSE). The packaged app is MIT (Nous Research).
