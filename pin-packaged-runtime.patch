@@ -115,10 +115,9 @@ index dee008f..e674c1e 100644
      }
  
 diff --git a/apps/desktop/electron/main.ts b/apps/desktop/electron/main.ts
-index 888377d..26d23a1 100644
 --- a/apps/desktop/electron/main.ts
 +++ b/apps/desktop/electron/main.ts
-@@ -78,7 +78,7 @@ import {
+@@ -86,7 +86,7 @@
    resolveLinuxPasswordStore
  } from './bootstrap-platform'
  import { decideBootstrapRepair } from './bootstrap-repair-guard'
@@ -127,7 +126,7 @@ index 888377d..26d23a1 100644
  import {
    BROWSER_WINDOW_HEIGHT,
    BROWSER_WINDOW_MIN_HEIGHT,
-@@ -446,6 +446,9 @@ if (USER_DATA_OVERRIDE) {
+@@ -480,6 +480,9 @@
  
  const DEV_SERVER = process.env.HERMES_DESKTOP_DEV_SERVER
  const IS_PACKAGED = app.isPackaged || Boolean(process.env.HERMES_DESKTOP_IS_PACKAGED)
@@ -137,7 +136,7 @@ index 888377d..26d23a1 100644
  const IS_MAC = process.platform === 'darwin'
  const IS_WINDOWS = process.platform === 'win32'
  const IS_WSL = isWslEnvironment()
-@@ -3633,6 +3636,14 @@ async function releaseBackendLock(updateRoot, tag) {
+@@ -4012,6 +4015,14 @@
  // Detection (checkUpdates / commit changelog / "N behind") stays in the UI;
  // only this apply action changed.
  async function applyUpdates(opts: { stopSafeBlockers?: boolean } = {}) {
@@ -152,7 +151,7 @@ index 888377d..26d23a1 100644
    if (updateInFlight) {
      throw new Error('An update is already in progress.')
    }
-@@ -4347,12 +4358,15 @@ function isActiveRuntimeUsable() {
+@@ -4755,12 +4766,15 @@
  }
  
  function activeRuntimeState() {
@@ -174,7 +173,7 @@ index 888377d..26d23a1 100644
  }
  
  function writeBootstrapMarker(payload) {
-@@ -4634,6 +4648,22 @@ function createActiveBackend(backendArgs) {
+@@ -5042,6 +5056,22 @@
    }
  }
  
@@ -197,7 +196,7 @@ index 888377d..26d23a1 100644
  function resolveHermesBackend(backendArgs) {
    // 1. Explicit override -- HERMES_DESKTOP_HERMES_ROOT points at a developer
    //    checkout. Honour it as-is (no bootstrap; the user is driving).
-@@ -4669,6 +4699,14 @@ function resolveHermesBackend(backendArgs) {
+@@ -5077,6 +5107,14 @@
    //    bootstrap when the runtime itself is unusable.
    const activeRuntime = activeRuntimeState()
  
@@ -212,7 +211,7 @@ index 888377d..26d23a1 100644
    if (activeRuntime.shouldUseActiveRuntime && !bootstrapRepairRequested) {
      if (!activeRuntime.hasValidMarker) {
        rememberLog(
-@@ -4795,20 +4833,7 @@ function resolveHermesBackend(backendArgs) {
+@@ -5203,20 +5241,7 @@
    //    resolveHermesBackend was the old "no payload" path and forced the
    //    user into a dead end. With the bootstrap protocol, "no install yet"
    //    is a recoverable state the GUI can drive through.
@@ -233,8 +232,8 @@ index 888377d..26d23a1 100644
 +  return createBootstrapNeededBackend(backendArgs)
  }
  
- async function ensureRuntime(backend) {
-@@ -4871,6 +4896,7 @@ async function ensureRuntime(backend) {
+ function ensureRuntime(backend: any): Promise<any> {
+@@ -5286,6 +5311,7 @@
        hermesHome: HERMES_HOME,
        logRoot: path.join(HERMES_HOME, 'logs'),
        abortSignal: bootstrapAbortController.signal,
@@ -242,13 +241,13 @@ index 888377d..26d23a1 100644
        onEvent: ev => {
          // Tee every bootstrap event to (a) the desktop log for forensics
          // and (b) the renderer for live progress UI. Either may be absent;
-@@ -16848,15 +16874,24 @@ const terminalIpc = registerTerminalIpc({
+@@ -17499,15 +17525,24 @@
  
  const disposeTerminalSession = terminalIpc.disposeTerminalSession
  
--ipcMain.handle('hermes:updates:check', async () =>
--  checkUpdates().catch(error => ({
-+ipcMain.handle('hermes:updates:check', async () => {
+-ipcMain.handle('hermes:updates:check', async (_event, opts) =>
+-  checkUpdates({ force: Boolean(opts?.force) }).catch(error => ({
++ipcMain.handle('hermes:updates:check', async (_event, opts) => {
 +  if (PACKAGE_MANAGED_RUNTIME) {
 +    return {
 +      supported: false,
@@ -258,7 +257,7 @@ index 888377d..26d23a1 100644
 +    }
 +  }
 +
-+  return checkUpdates().catch(error => ({
++  return checkUpdates({ force: Boolean(opts?.force) }).catch(error => ({
      supported: true,
      branch: readDesktopUpdateConfig().branch,
      error: 'check-failed',
