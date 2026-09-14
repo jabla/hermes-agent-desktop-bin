@@ -7,9 +7,9 @@
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
-_pkgver_tag=v2026.9.11
-_commit=939e45c91d751fadd94dcd1b873ac3cb44846213
-pkgver=0.21.2
+_pkgver_tag=v2026.9.14
+_commit=345cd2b057a452236de401d3534b8502a7465e8d
+pkgver=0.21.3
 pkgrel=1
 pkgdesc="Official Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
@@ -33,7 +33,7 @@ source=(
 # NOTE: makepkg also validates the patch files. Only the tarball sum is
 # maintained by the bump automation — refresh a patch sum by hand whenever the
 # patch file changes, or the build fails at "Validating source files".
-sha256sums=('bf45fc6c40ad770e30dfa7677ee6804a24be1a7eab768b283a0883c64662d76e'
+sha256sums=('47df72ebd3f9c96d806a94541163f7fe7d7ce5b84f85c1d3787e6dfeea1d7834'
             'ee465a1aa2ad5789fa5c7b3a89993bbf0e68efddbf27c93109519b72a4cb90f7'
             '7076b57073bb62d7b722de41574bf709c5c7674c3a35eb465904e4fa08751a46')
 
