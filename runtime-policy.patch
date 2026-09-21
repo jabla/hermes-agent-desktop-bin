@@ -6,7 +6,7 @@
  
  The Python backing the install is shared by every Hermes profile because the checkout's ``venv``
  is shared. Runtime repair therefore uses an install-scoped store under
-@@ -25,6 +25,7 @@
+@@ -30,6 +30,7 @@
  from typing import Callable, Optional
  
  from hermes_constants import get_hermes_home
@@ -14,7 +14,7 @@
  from hermes_cli.sqlite_runtime import (
      SQLiteRuntimeInfo, isolated_interpreter_env, probe_sqlite_runtime)
  
-@@ -46,7 +47,12 @@
+@@ -51,7 +52,12 @@
  
  
  def resolve_uv() -> Optional[str]:
@@ -28,14 +28,14 @@
      p = managed_uv_path()
      return str(p) if p.is_file() and os.access(p, os.X_OK) else None
  
-@@ -165,10 +171,14 @@
+@@ -179,10 +185,14 @@
  
  def _ensure_uv_path(
      *, repair_observer: Callable[[RuntimeRepairResult], None] | None = None) -> Optional[str]:
 -    """Resolve the managed uv path, installing it if necessary (plain ``str``/``None``)."""
 +    """Resolve uv, bootstrapping a private copy only when neither source exists."""
      existing = resolve_uv()
-     if existing:
+     if existing and _uv_runs(existing):
          return existing
 +
 +    if is_desktop_package_managed(_PROJECT_ROOT):
@@ -44,7 +44,7 @@
      target = managed_uv_path()
      target.parent.mkdir(parents=True, exist_ok=True)
      print(f"  → Installing managed uv into {target.parent} ...")
-@@ -214,7 +224,7 @@
+@@ -258,7 +268,7 @@
  
  def ensure_uv(
      *, repair_observer: Callable[[RuntimeRepairResult], None] | None = None):
@@ -53,7 +53,7 @@
  
      On POSIX the result is a :class:`_UvResult` (``str`` subclass) usable as the path *and*
      unpackable as ``(path, fresh_bootstrap)`` for older call sites.
-@@ -260,7 +270,7 @@
+@@ -304,7 +314,7 @@
  def update_managed_uv(
      *, repair_observer: Callable[[RuntimeRepairResult], None] | None = None, force: bool = False
  ) -> Optional[str]:
@@ -62,7 +62,7 @@
  
      The network self-update is skipped when it succeeded within ``UV_SELF_UPDATE_INTERVAL_SECONDS``
      unless ``force=True``; the vulnerable-runtime repair probe ALWAYS runs — CVE-driven repair is
-@@ -270,7 +280,9 @@
+@@ -314,7 +324,9 @@
      if not existing:
          # Not installed yet — ensure_uv() will handle that elsewhere.
          return None
@@ -73,7 +73,7 @@
          try:
              result = subprocess.run(
                  [existing, "self", "update"], capture_output=True,
-@@ -790,6 +802,8 @@
+@@ -917,6 +929,8 @@
      with.
      """
      managed = managed_uv_path()
@@ -143,7 +143,7 @@
          from hermes_cli.config import detect_install_method, is_nix_install_method
 --- a/hermes_cli/banner.py
 +++ b/hermes_cli/banner.py
-@@ -374,6 +374,11 @@
+@@ -382,6 +382,11 @@
      If ``HERMES_REVISION`` is set (nix builds embed it), compare it to upstream main; otherwise
      compare the local checkout's HEAD. Both go through the GitHub API, never ``git fetch``.
      """
@@ -157,7 +157,7 @@
          return load_config().get("updates", {}).get("check", True) is False
 --- a/hermes_cli/web_routers/actions.py
 +++ b/hermes_cli/web_routers/actions.py
-@@ -272,7 +272,7 @@
+@@ -261,7 +261,7 @@
  
      Returns install_method ('apt'|'git'|'docker'|'nix'|'nixos'|'unknown'),
      current_version, behind (commits behind, 0 = up to date, -1 = unknown count,
@@ -166,7 +166,7 @@
      dashboard button can apply in place), update_command, message (guidance for
      non-applyable methods) and, for git installs that are behind, commits
      [{sha, summary, author, at}] (additive; existing consumers ignore it).
-@@ -290,6 +290,14 @@
+@@ -279,6 +279,14 @@
          "update_available": False, "can_apply": install_method == "git",
          "update_command": recommended_update_command_for_method(install_method), "message": None,
      }
@@ -183,7 +183,7 @@
          payload["message"] = non_applyable()
 --- a/tools/lazy_deps.py
 +++ b/tools/lazy_deps.py
-@@ -469,7 +469,7 @@
+@@ -529,7 +529,7 @@
  
  
  def _uv_binary() -> Optional[str]:
@@ -194,7 +194,7 @@
          from hermes_cli.managed_uv import resolve_uv
 --- a/hermes_cli/update_cmd_deps.py
 +++ b/hermes_cli/update_cmd_deps.py
-@@ -412,11 +412,6 @@
+@@ -483,11 +483,6 @@
          return existing
      if not _m()._is_termux_env():
          return None
@@ -206,7 +206,7 @@
      with suppress(Exception):
          print("  → Termux detected: trying to install uv for faster dependency updates...")
          result = subprocess.run(
-@@ -983,7 +978,7 @@
+@@ -1125,7 +1120,7 @@
          "→ Python dependencies unchanged — skipping reinstall" if deps_current
          else "→ Updating Python dependencies...")
      from hermes_cli.managed_uv import ensure_uv, update_managed_uv
