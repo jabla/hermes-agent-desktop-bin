@@ -9,11 +9,14 @@ Three modes:
     (patches, launcher, tests) in PKGBUILD after editing one of them.
 
 Every bump run also compares PKGBUILD with the AUR source package
-hermes-agent-desktop and reports drift as a warning.
+hermes-agent-desktop (its sources, checksums and dependencies, and its
+PKGBUILD with the state last reviewed here) and reports drift as a warning,
+also in the bump PR.
 
 Exits 0 without changes when PKGBUILD already tracks the latest upstream tag.
 Requires: gh (GH_TOKEN + GH_REPO env), makepkg available for .SRCINFO regen,
-vercmp (pacman) for the version order.
+vercmp (pacman) for the version order. UPSTREAM_API_TOKEN, when set,
+authenticates the GitHub API reads.
 Must not run as root: makepkg refuses to run as root, so the container job
 runs this script through runuser as an unprivileged user.
 """
@@ -29,15 +32,28 @@ import urllib.request
 REPO = "NousResearch/hermes-agent"
 REFERENCE = "hermes-agent-desktop"
 REFERENCE_SRCINFO = f"https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h={REFERENCE}"
+REFERENCE_PKGBUILD = f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={REFERENCE}"
+REFERENCE_LOG = f"https://aur.archlinux.org/cgit/aur.git/log/?h={REFERENCE}"
+# Fingerprint (see reference_fingerprint) of the hermes-agent-desktop PKGBUILD
+# that PKGBUILD was last compared with: hermes-agent-desktop 0.21.3-1. Update
+# it after porting a reference change.
+REFERENCE_PKGBUILD_SHA256 = "e32a42c646cb464bc5144c265dbc5ad6a826ee1ab3758afe14fa3bcad117164b"
 SHA_RE = re.compile(r"^sha256sums=\('([0-9a-f]{64})'", re.M)
+# The fields every reference release changes; everything else is packaging.
+VERSION_FIELDS_RE = re.compile(
+    r"(?ms)^(?:pkgver|pkgrel|_pkgver_tag|_commit)=[^\n]*\n"
+    r"|^(?:sha256sums|sha512sums|b2sums|md5sums)=\(.*?\)[^\n]*\n")
 
 
 def api(path: str):
-    req = urllib.request.Request(
-        "https://api.github.com" + path,
-        headers={"Accept": "application/vnd.github+json",
-                 "User-Agent": "hermes-desktop-arch-builder"},
-    )
+    headers = {"Accept": "application/vnd.github+json",
+               "User-Agent": "hermes-desktop-arch-builder"}
+    # Unauthenticated requests share a 60/hour limit per runner IP and fail
+    # with "HTTP Error 403: rate limit exceeded" on busy hosted runners.
+    token = os.environ.get("UPSTREAM_API_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request("https://api.github.com" + path, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
 
@@ -95,9 +111,15 @@ def edit_pkgbuild(path: str, tag: str, version: str, commit: str, checksum: str,
     # Fail loudly if any field stopped matching, instead of shipping the old value.
     for field in (f"_pkgver_tag={tag}", f"_commit={commit}", f"pkgver={version}",
                   f"pkgrel={pkgrel}", f"sha256sums=('{checksum}'"):
-        if field not in pkg:
+        if not starts_line(pkg, field):
             sys.exit(f"failed to write {field!r} into {path}")
     open(path, "w").write(pkg)
+
+
+def starts_line(text: str, prefix: str) -> bool:
+    """Whether a line starts with prefix (a plain substring test would also
+    accept it inside another assignment, e.g. _commit= in _upstream_commit=)."""
+    return re.search(r"(?m)^" + re.escape(prefix), text) is not None
 
 
 def sync_local_source_sums(path: str) -> list[str]:
@@ -149,7 +171,7 @@ def edit_aur_pkgbuild(path: str, version: str, pkgrel: int):
     pkg = re.sub(r"(?m)^pkgver=.*$", f"pkgver={version}", pkg)
     pkg = re.sub(r"(?m)^pkgrel=.*$", f"pkgrel={pkgrel}", pkg)
     for field in (f"pkgver={version}", f"pkgrel={pkgrel}"):
-        if field not in pkg:
+        if not starts_line(pkg, field):
             sys.exit(f"failed to write {field!r} into {path}")
     open(path, "w").write(pkg)
 
@@ -208,6 +230,33 @@ DIVERGENT_OPTDEPENDS = {
 }
 
 
+def reference_fingerprint(text: str) -> str:
+    """sha256 of a PKGBUILD without the fields every release changes."""
+    return hashlib.sha256(VERSION_FIELDS_RE.sub("", text).encode()).hexdigest()
+
+
+def reference_pkgbuild_drift() -> list[str]:
+    """Report when the reference PKGBUILD changed beyond its version fields.
+
+    The .SRCINFO comparison sees sources, checksums and dependencies, but not
+    prepare()/build()/check()/package(), which PKGBUILD follows apart from the
+    deliberate divergences listed in the README. A change there usually has
+    to be ported. Never copies anything.
+    """
+    try:
+        text = fetch(REFERENCE_PKGBUILD).decode()
+    except Exception as exc:        # AUR outages must not block the bump
+        print(f"::warning::{REFERENCE} PKGBUILD comparison skipped: {exc}")
+        return []
+    current = reference_fingerprint(text)
+    if current == REFERENCE_PKGBUILD_SHA256:
+        return []
+    return [f"the {REFERENCE} PKGBUILD changed beyond its version fields since "
+            f"it was last reviewed ({REFERENCE_LOG}); port what applies to "
+            f"PKGBUILD, then set REFERENCE_PKGBUILD_SHA256 in "
+            f"scripts/bump-pkgbuild.py to {current}"]
+
+
 def check_reference_drift() -> list[str]:
     """Compare PKGBUILD with the AUR source package it is kept in sync with.
 
@@ -215,7 +264,8 @@ def check_reference_drift() -> list[str]:
     or behind. Source files and runtime dependencies must match at any
     version, checksums only while both build the same pkgver — minus the
     deliberate divergences in LOCAL_ONLY_SOURCES, DIVERGENT_CHECKSUMS and
-    DIVERGENT_OPTDEPENDS.
+    DIVERGENT_OPTDEPENDS. The reference PKGBUILD itself must match the state
+    last reviewed here (REFERENCE_PKGBUILD_SHA256).
     """
     try:
         ref = parse_srcinfo(fetch(REFERENCE_SRCINFO).decode())
@@ -223,7 +273,7 @@ def check_reference_drift() -> list[str]:
         print(f"::warning::{REFERENCE} drift check skipped: {exc}")
         return []
     ours = parse_srcinfo(printsrcinfo("."))
-    drift = []
+    drift = reference_pkgbuild_drift()
     for key in ("depends", "optdepends"):
         here, there = set(ours.get(key, [])), set(ref.get(key, []))
         if key == "optdepends":
@@ -277,7 +327,7 @@ def main() -> int:
         return 0
 
     require_non_root()
-    check_reference_drift()
+    drift = check_reference_drift()
 
     rel = api(f"/repos/{REPO}/releases/latest")
     tag = rel["tag_name"]
@@ -362,12 +412,15 @@ def main() -> int:
         print("push failed:", r.stderr)
         return 1
 
+    body = (f"Automated bump to upstream [release {tag}]"
+            f"(https://github.com/{REPO}/releases/tag/{tag}).\n\n"
+            "Build + smoke run as required checks; auto-merge after green.")
+    if drift:
+        body += (f"\n\n**Drift from {REFERENCE}** (review before or after the merge):\n"
+                 + "\n".join(f"- {line}" for line in drift))
     r = gh(["pr", "create", "--base", "main", "--head", branch,
             "--title", f"chore: bump to {tag} (v{full_version})",
-            "--body",
-            f"Automated bump to upstream [release {tag}]"
-            f"(https://github.com/{REPO}/releases/tag/{tag}).\n\n"
-            "Build + smoke run as required checks; auto-merge after green."])
+            "--body", body])
     if r.returncode != 0:
         print("pr create failed:", r.stderr)
         return 1
