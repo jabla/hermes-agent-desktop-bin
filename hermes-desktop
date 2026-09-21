@@ -26,9 +26,15 @@ export HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME=1
 # value is never overwritten, and installations without /opt/hermes-agent keep
 # the upstream first-run flow. RESOURCES_PATH/PACKAGE_MANAGED_RUNTIME stay as
 # they are: the in-app updater must stay disabled either way.
-hermes_runtime_root="${HERMES_DESKTOP_RUNTIME_ROOT:-/opt/hermes-agent}"
-if [[ -z "${HERMES_DESKTOP_HERMES_ROOT:-}" && -x "${hermes_runtime_root}/venv/bin/python" ]]; then
-  export HERMES_DESKTOP_HERMES_ROOT="${hermes_runtime_root}"
+#
+# The app then starts the runtime's venv python directly instead of going
+# through /usr/bin/hermes, so the backend gets that wrapper's environment
+# here: the venv is root-owned, and optional dependencies installed on demand
+# live in the user's durable target, which the CLI and the desktop must share.
+if [[ -z "${HERMES_DESKTOP_HERMES_ROOT:-}" && -x /opt/hermes-agent/venv/bin/python ]]; then
+  export HERMES_DESKTOP_HERMES_ROOT=/opt/hermes-agent
+  export HERMES_DISABLE_LAZY_INSTALLS=1
+  export HERMES_LAZY_INSTALL_TARGET="${XDG_DATA_HOME:-${HOME}/.local/share}/hermes-agent/python"
 fi
 
 # Reuse a local browser for agent tools, not the user's browser profile.

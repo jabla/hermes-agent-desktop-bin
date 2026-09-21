@@ -214,7 +214,8 @@ def check_reference_drift() -> list[str]:
     Warns instead of failing: the reference may simply be one release ahead
     or behind. Source files and runtime dependencies must match at any
     version, checksums only while both build the same pkgver — minus the
-    deliberate divergences in DIVERGENT_SOURCES / DIVERGENT_OPTDEPENDS.
+    deliberate divergences in LOCAL_ONLY_SOURCES, DIVERGENT_CHECKSUMS and
+    DIVERGENT_OPTDEPENDS.
     """
     try:
         ref = parse_srcinfo(fetch(REFERENCE_SRCINFO).decode())

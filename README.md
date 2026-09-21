@@ -29,6 +29,12 @@ the one the user already has:
   `/opt/hermes-agent/venv/bin/python` exists and only when the variable is not
   set already. The app evaluates it before every runtime and policy check, runs
   its backend from `/opt/hermes-agent`, and never starts an install of its own.
+  The backend then starts the runtime's venv python directly instead of
+  `/usr/bin/hermes`, so the launcher also exports that wrapper's environment
+  (`HERMES_DISABLE_LAZY_INSTALLS=1`, `HERMES_LAZY_INSTALL_TARGET` under
+  `$XDG_DATA_HOME/hermes-agent/python`): the venv is root-owned, and the
+  optional dependencies installed on demand (voice, provider SDKs, …) live in
+  the user's durable target, shared by the CLI and the desktop.
 - No package runtime → unchanged upstream behaviour: the first-run setup offers
   to install a runtime into `~/.hermes/hermes-agent`.
 
@@ -55,7 +61,10 @@ meaningful, and the CI smoke job covers both paths.
 - **New upstream release**: the scheduled `bump` job checks every 2 hours, moves `PKGBUILD` to the new tag (tag, commit, source checksum), updates `aur/PKGBUILD` and `.SRCINFO`, and opens an auto-merge PR. A new version starts at `pkgrel=1`; a new tag with an unchanged version gets the next `pkgrel` (otherwise its release tag would already exist); an older version aborts the bump. An open bump PR is updated with `main` on every run, because the ruleset only merges up-to-date branches. The job authenticates with the `BUMP_TOKEN` secret — a fine-grained PAT (Contents + Pull requests: read/write) — because the default `GITHUB_TOKEN` produces a bot-authored PR whose checks need manual approval and whose merge never triggers the release pipeline. The job logs the token identity it used and fails if the secret is missing or rejected. The PAT is created without an expiry date, so revocation — not rotation — is the deliberate step: delete it under *Settings → Developer settings → Fine-grained tokens* and `gh secret delete BUMP_TOKEN` here and in `hermes-agent-bin`.
 - **Runtime in CI**: `smoke` installs a pinned `hermes-agent-bin` release
   artifact (version + sha256 in the workflow) to boot the app on a real package
-  runtime, and fails when the app stops at the first-run setup screen instead.
+  runtime, and fails when the app stops at the first-run setup screen instead
+  or when the running backend lacks a variable the runtime's `/usr/bin/hermes`
+  exports. Boot decisions are asserted on `~/.hermes/logs/desktop.log`, not on
+  stdout, which only carries Electron's output and the install stamp.
   Bump that pin together with the desktop version; the job checks the download
   against the pinned checksum.
 - **Pipeline**: `build` → `smoke` → `release` → `aur-sync`. The first two also run on pull requests (merge gate): `build` runs `check()` (typecheck, the upstream tests covering the patched files, the packaging tests, node-pty under `electron42`; upstream's full suite is left to upstream's CI), `smoke` installs the package with its declared dependencies, loads the node-pty addon with `electron42` and boots the app under xvfb until the packaged install stamp is logged. `release` and `aur-sync` only run for `main`; `release` writes notes linking the upstream release and the upstream compare view, and `aur-sync` injects the released artifact's sha256 into `aur/` and pushes to the AUR only while its commit is still `main`'s HEAD. Upstream tag and commit are pinned in `PKGBUILD` (`_pkgver_tag`, `_commit`).
