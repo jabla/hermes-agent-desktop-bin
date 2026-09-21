@@ -29,7 +29,12 @@ vulnerabilities there.
   key, so both repositories must protect it the same way.
 - The AUR package's patches, launcher and tests are vendored from the AUR
   source package `hermes-agent-desktop` after review; the bump job only
-  reports drift from it and never copies files automatically.
+  reports drift from it and never copies files automatically. Deliberate
+  divergences (the launcher's runtime root, its test, one optdepends entry) are
+  listed in `scripts/bump-pkgbuild.py` and in the README.
+- The `smoke` job downloads a pinned release artifact of `hermes-agent-bin`
+  (version and sha256 hard-coded in the workflow, verified before install) to
+  boot the app against a real package runtime.
 - `main` is protected: pull requests required, `build` + `smoke` checks
   mandatory, force-push blocked.
 
