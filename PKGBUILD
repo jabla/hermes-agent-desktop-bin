@@ -1,41 +1,64 @@
 # Build PKGBUILD for the prebuilt hermes-agent-desktop-bin package.
-# Adapted from the AUR package hermes-agent-desktop (maintainer nullptr,
-# https://aur.archlinux.org/packages/hermes-agent-desktop), including its
-# system-electron42 patches (system-electron-resources.patch,
-# pin-packaged-runtime.patch). The packaged app itself is MIT-licensed
-# (Nous Research).
+# Kept in sync with the AUR source package hermes-agent-desktop
+# (https://aur.archlinux.org/packages/hermes-agent-desktop): its patches,
+# launcher and regression tests are vendored verbatim, so the prebuilt package
+# behaves exactly like a local build of the source package. The scheduled bump
+# job warns when that package's sources or dependencies drift from these. The
+# packaged app itself is MIT-licensed (Nous Research).
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
 _pkgver_tag=v2026.9.14
 _commit=345cd2b057a452236de401d3534b8502a7465e8d
 pkgver=0.21.3
-pkgrel=1
+pkgrel=2
 pkgdesc="Official Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
 url='https://github.com/NousResearch/hermes-agent'
 license=('MIT')
 depends=(
   'curl' 'electron42' 'git' 'hicolor-icon-theme' 'libnotify' 'libsecret'
-  'xdg-utils'
+  'nodejs>=22.22' 'npm' 'uv' 'xdg-utils'
 )
 optdepends=(
   'libayatana-appindicator: tray indicator support'
+  'google-chrome: local browser automation (or chromium)'
+  'chromium: local browser automation (or google-chrome)'
+  'ffmpeg: audio and video processing'
+  'ripgrep: fast file content search'
 )
-makedepends=('nodejs>=22.22' 'npm' 'python')
+makedepends=('python')
+provides=('hermes-agent-desktop')
 conflicts=('hermes-agent-desktop')
 options=('!debug')
 source=(
   "hermes-agent-${_pkgver_tag}.tar.gz::${url}/archive/refs/tags/${_pkgver_tag}.tar.gz"
   'system-electron-resources.patch'
   'pin-packaged-runtime.patch'
+  'fix-voice-prefs-storage-spy.patch'
+  'system-browser.patch'
+  'packaged-bootstrap.patch'
+  'runtime-policy.patch'
+  'hermes-desktop'
+  'launcher.test.cjs'
+  'runtime.test.cjs'
+  'runtime-policy.test.py'
 )
-# NOTE: makepkg also validates the patch files. Only the tarball sum is
-# maintained by the bump automation — refresh a patch sum by hand whenever the
-# patch file changes, or the build fails at "Validating source files".
+# NOTE: makepkg also validates the local files. The bump automation maintains
+# the tarball sum; after editing a local file run
+# `python3 scripts/bump-pkgbuild.py --sync-sums`, or the build fails at
+# "Validating source files".
 sha256sums=('47df72ebd3f9c96d806a94541163f7fe7d7ce5b84f85c1d3787e6dfeea1d7834'
             'ee465a1aa2ad5789fa5c7b3a89993bbf0e68efddbf27c93109519b72a4cb90f7'
-            '7076b57073bb62d7b722de41574bf709c5c7674c3a35eb465904e4fa08751a46')
+            '5c185a979974f7a9a476b32e5e8ac21dfcd907ed7d0e671cfb294ecf17d021b0'
+            '7f8500e475a13466ecba2bb74e73fbbcba8dcb70bcbf4e789faf7a8f27df0cac'
+            'fa8933a96e58575e7d4f876a7eb380d6c1723233832b787a46fb158f79df7718'
+            '960009893274b567eca91f42ae168661efda18646f2783b75b831e1d71190cb1'
+            '9fca70bad0c6db28e9499761a570e8bca83c9666e6bb8ec35401b8aef3424a8d'
+            '700eaf971f8aeedf0268cd85954235d1770b786b19ca7e9d7905bf17aed86d44'
+            'dcb84ac7c5f5a7168d089ba082a8c8c77cf3955abc79775f530aee870a30d5df'
+            '1a39719fd6b6ac2e773e6f72bd55ef313469734cf72dbe1f9adf7bff0979c873'
+            '9be2b77733674bbfdb1a39ddc902ac9f751f49ce7398675c89190eb0cc6759ea')
 
 # NOTE: ${srcdir} is empty at the top level of a PKGBUILD — makepkg only sets
 # it inside the function scope of prepare()/build()/package(). Computing the
@@ -56,11 +79,16 @@ _set_npm_env() {
 prepare() {
   cd "$(_extract_dir)"
   _set_npm_env
-  patch -Np1 -i "${srcdir}/system-electron-resources.patch"
-  patch -Np1 -i "${srcdir}/pin-packaged-runtime.patch"
-  # The release identifies Hermes Agent as ${pkgver}, but the desktop
-  # package.json is not bumped — it still says 0.17.0. Patch it here so the
-  # packaged desktop metadata matches the release.
+  # --fuzz=0: a hunk whose context drifted must fail loudly instead of being
+  # applied at a guessed location (offsets are still accepted).
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/system-electron-resources.patch"
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/pin-packaged-runtime.patch"
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/fix-voice-prefs-storage-spy.patch"
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/system-browser.patch"
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/packaged-bootstrap.patch"
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/runtime-policy.patch"
+  # Keep desktop metadata aligned with the Agent release, not the separately
+  # versioned upstream desktop package.json.
   npm pkg set version=${pkgver} --prefix apps/desktop
   # The source archive has no .git directory. Pin the peeled release commit
   # locally so the bundled install stamp is reproducible and does not require
@@ -73,6 +101,24 @@ prepare() {
   # tooling, but make any build helper that resolves `require('electron')` use
   # Arch's versioned runtime instead of downloading a second copy.
   local electron_dir='apps/desktop/node_modules/electron'
+
+  # Upstream locks an older Electron major (40.x at the time of writing) than
+  # the runtime used here. electron42 is the oldest major that still receives
+  # security fixes, so running the app on a newer runtime is deliberate. The
+  # opposite direction is not safe: an app written against a newer major may
+  # call APIs this runtime lacks, so stop instead of shipping that build.
+  local locked_electron system_electron
+  locked_electron="$(node -p "require('./${electron_dir}/package.json').version")"
+  system_electron="$(< /usr/lib/electron42/version)"
+  if (( ${locked_electron%%.*} > ${system_electron%%.*} )); then
+    printf 'ERROR: upstream locks Electron %s, newer than the system runtime %s — move the package to a newer electronNN\n' \
+      "${locked_electron}" "${system_electron}"
+    return 1
+  elif (( ${locked_electron%%.*} < ${system_electron%%.*} )); then
+    printf 'NOTE: upstream locks Electron %s; the package runs on system Electron %s\n' \
+      "${locked_electron}" "${system_electron}"
+  fi
+
   rm -rf "${electron_dir}/dist"
   ln -s /usr/lib/electron42 "${electron_dir}/dist"
   printf '%s' 'electron' > "${electron_dir}/path.txt"
@@ -120,8 +166,19 @@ check() {
   cd "$(_extract_dir)"
   _set_npm_env
   export npm_config_offline=true
+  node "${srcdir}/launcher.test.cjs"
+  node "${srcdir}/runtime.test.cjs" "$PWD/scripts/install.sh" "$PWD"
+  python -B "${srcdir}/runtime-policy.test.py" "$PWD"
   npm run typecheck --workspace apps/desktop
-  npm run test --workspace apps/desktop
+
+  # Upstream's full vitest suite (~1000 files) runs in upstream's CI; here it
+  # took ~90% of the build time and exercised upstream code on Arch's system
+  # Node, which the app does not run on. Run the tests that cover what the
+  # patches change instead: the patched tests and every test importing a
+  # patched module. The file list follows the patches automatically.
+  local patched=()
+  mapfile -t patched < <(sed -n 's|^+++ b/apps/desktop/||p' "${srcdir}"/*.patch | sort -u)
+  (cd apps/desktop && npx vitest related --run --passWithNoTests "${patched[@]}")
 
   # node-pty is the only native Node addon shipped by Hermes. Load the staged
   # module with the exact Electron runtime used by the installed launcher; its
@@ -151,8 +208,25 @@ package() {
     find "${resources}" -maxdepth 2 -printf '%M %p\n' 2>/dev/null || true
     return 1
   fi
-  # Install dir stays version-independent of pkgname: the launcher below and
-  # the packaged app reference /usr/lib/hermes-agent-desktop by path. The
+  # Only the first three resources are installed. The skipped ones are
+  # upstream's Windows icon, electron-updater metadata (Hermes ships no
+  # electron-updater) and Electron's own default app, which electron42
+  # provides. Anything else is a new runtime resource the app would miss on
+  # Linux, so stop until it is packaged or deliberately added here.
+  local entry
+  for entry in "${resources}"/*; do
+    case "${entry##*/}" in
+      app.asar|app.asar.unpacked|install-stamp.json) ;;
+      icon.ico|app-update.yml|default_app.asar) ;;
+      *)
+        printf 'ERROR: unexpected electron-builder resource %s — install it or allowlist it in package()\n' \
+          "${entry##*/}"
+        return 1
+        ;;
+    esac
+  done
+  # Install dir stays version-independent of pkgname: the launcher and the
+  # packaged app reference /usr/lib/hermes-agent-desktop by path. The
   # conflicts=() entry guarantees only one variant (source or -bin) is
   # installed, so a fixed dir cannot collide.
   local libdir="/usr/lib/hermes-agent-desktop"
@@ -163,30 +237,12 @@ package() {
     "${pkgdir}${libdir}/app.asar.unpacked"
   install -Dm644 "${resources}/install-stamp.json" \
     "${pkgdir}${libdir}/install-stamp.json"
-  # One Electron/Chromium argument per line. Blank lines and full-line comments
-  # are ignored; the file is data, never sourced or evaluated as shell code.
-  install -Dm755 /dev/stdin "${pkgdir}/usr/bin/${_pkgname}" <<'EOF'
-#!/bin/bash
-
-flags_file="${XDG_CONFIG_HOME:-${HOME}/.config}/hermes-desktop-flags.conf"
-declare -a flags=()
-
-if [[ -r "${flags_file}" ]]; then
-  while IFS= read -r flag || [[ -n "${flag}" ]]; do
-    flag="${flag#"${flag%%[![:space:]]*}"}"
-    flag="${flag%"${flag##*[![:space:]]}"}"
-    [[ -z "${flag}" || "${flag}" == \#* ]] && continue
-    flags+=("${flag}")
-  done < "${flags_file}"
-fi
-
-export HERMES_DESKTOP_IS_PACKAGED=1
-export HERMES_DESKTOP_RESOURCES_PATH=/usr/lib/hermes-agent-desktop
-export HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME=1
-
-exec /usr/bin/electron42 "${flags[@]}" \
-  /usr/lib/hermes-agent-desktop/app.asar "$@"
-EOF
+  # Bootstrap uses the reviewed installer and patch from this exact package,
+  # not an unpatched installer downloaded separately from GitHub.
+  install -Dm644 scripts/install.sh "${pkgdir}${libdir}/runtime/install.sh"
+  install -Dm644 "${srcdir}/runtime-policy.patch" \
+    "${pkgdir}${libdir}/runtime/runtime-policy.patch"
+  install -Dm755 "${srcdir}/hermes-desktop" "${pkgdir}/usr/bin/${_pkgname}"
   install -Dm644 /dev/stdin "${pkgdir}/usr/share/applications/${_pkgname}.desktop" <<EOF
 [Desktop Entry]
 Name=Hermes

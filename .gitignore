@@ -3,5 +3,8 @@
 *.zip
 *.pkg.tar.*
 *.src.tar.*
+*.tar.zst
+src/
+pkg/
 __pycache__/
 *.pyc
