@@ -25,7 +25,9 @@ jobs:
   # checks and the push that follows the merge.
   # ---------------------------------------------------------------------------
   bump:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.bump)
+    # The schedule only bumps the canonical repository; copies (forks, a CI
+    # test repository) bump on manual dispatch only and idle for free.
+    if: (github.event_name == 'schedule' && github.repository == 'jabla/hermes-agent-desktop-bin') || (github.event_name == 'workflow_dispatch' && inputs.bump)
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
@@ -39,28 +41,35 @@ jobs:
         run: pacman -Syu --noconfirm --needed base-devel git github-cli python curl
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The bump pushes with BUMP_TOKEN in the push URL. A persisted
+          # workflow token (an auth header for github.com) would take
+          # precedence and push as github-actions[bot] instead.
+          persist-credentials: false
 
-      # Fail loudly when the PAT is missing or expired: the run then aborts
-      # here instead of silently opening a bot-authored PR that nobody can
-      # auto-merge and that never triggers the release pipeline.
+      # Fail loudly when the PAT is missing or no longer valid: the run then
+      # aborts here instead of opening a PR nobody can auto-merge. The workflow
+      # token is no fallback — a PR opened with it is bot-authored, its checks
+      # need manual approval and its merge never triggers the release pipeline.
       - name: Check the bump token
         env:
-          GH_TOKEN: ${{ secrets.BUMP_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.BUMP_TOKEN }}
         run: |
           set -euo pipefail
-          login=$(gh api /user --jq .login)
-          echo "bump token identity: $login"
-          if [ "$login" = "github-actions[bot]" ]; then
-            echo "::warning::BUMP_TOKEN is unset or invalid for PR use — the bump PR will be bot-authored, its checks will need manual approval and the merge will not trigger build/release/aur-sync"
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::BUMP_TOKEN secret is not set — store a fine-grained PAT (Contents + Pull requests: read/write) with: gh secret set BUMP_TOKEN"
+            exit 1
           fi
+          if ! login=$(gh api /user --jq .login 2>&1); then
+            echo "::error::GitHub rejects BUMP_TOKEN (revoked?): $login"
+            exit 1
+          fi
+          echo "bump token identity: $login"
 
       - name: Bump PKGBUILD + aur/ and open auto-merge PR
         env:
-          # Prefer the BUMP_TOKEN PAT over the workflow token — a PR opened with
-          # GITHUB_TOKEN is bot-authored: its checks need manual approval and
-          # its merge does not trigger the push pipeline. Falls back to the
-          # workflow token when the secret is unset.
-          GH_TOKEN: ${{ secrets.BUMP_TOKEN || github.token }}
+          # The BUMP_TOKEN PAT, never the workflow token (see the check above).
+          GH_TOKEN: ${{ secrets.BUMP_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -85,30 +94,34 @@ jobs:
     container:
       image: archlinux:latest
     steps:
-      - name: Install build toolchain (Arch container)
-        run: |
-          pacman -Syu --noconfirm --needed \
-            base-devel git curl \
-            nodejs npm python \
-            electron42 hicolor-icon-theme libnotify libsecret xdg-utils
+      - name: Install base toolchain (Arch container)
+        run: pacman -Syu --noconfirm --needed base-devel git
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Validate aur/.SRCINFO matches aur/PKGBUILD
-        run: |
-          useradd -m validator
-          chown -R validator:validator "$GITHUB_WORKSPACE"
-          runuser -u validator -- sh -c 'cd "$GITHUB_WORKSPACE/aur" && makepkg --printsrcinfo | diff -q - .SRCINFO'
-
-      - name: Build package (non-root makepkg)
+      - name: Validate aur/.SRCINFO and the wrapper's metadata
         run: |
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- sh -c 'cd "$GITHUB_WORKSPACE/aur" && makepkg --printsrcinfo | diff -q - .SRCINFO'
+          runuser -u builder -- bash "$GITHUB_WORKSPACE/scripts/check-metadata.sh"
+
+      - name: Install dependencies declared in PKGBUILD
+        run: |
+          # Read them from PKGBUILD itself, so CI installs exactly what
+          # makepkg -s would and cannot drift from a hand-kept list.
           cd "$GITHUB_WORKSPACE"
-          # --nocheck: headless container has no display; upstream runs the full
-          # typecheck/vitest suite in its own CI. Packaging correctness is
-          # validated separately by a boot smoke test.
-          runuser -u builder -- makepkg -f --noconfirm --nocheck
+          mapfile -t deps < <(runuser -u builder -- makepkg --printsrcinfo |
+            sed -nE 's/^\t(depends|makedepends|checkdepends) = //p')
+          pacman -S --noconfirm --needed "${deps[@]}"
+
+      - name: Build package (non-root makepkg, with check())
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          # check() runs the typecheck, the vitest tests covering the patched
+          # files, the packaging regression tests and the node-pty load test
+          # under electron42.
+          runuser -u builder -- makepkg -f --noconfirm
 
       - name: Show result
         run: ls -lh "$GITHUB_WORKSPACE"/*.pkg.tar.zst
@@ -119,6 +132,8 @@ jobs:
           name: pkg
           path: '*.pkg.tar.zst'
           if-no-files-found: error
+          # Only smoke and release of this run need it; the release keeps the file.
+          retention-days: 3
 
   smoke:
     runs-on: ubuntu-latest
@@ -126,11 +141,10 @@ jobs:
     container:
       image: archlinux:latest
     steps:
-      - name: Install runtime deps + xvfb
-        run: |
-          pacman -Syu --noconfirm --needed \
-            curl git hicolor-icon-theme libnotify libsecret xdg-utils \
-            electron42 xorg-server-xvfb
+      # Runtime dependencies are deliberately not preinstalled: pacman -U has
+      # to resolve them from the package's own depends=().
+      - name: Install xvfb
+        run: pacman -Syu --noconfirm --needed xorg-server-xvfb
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -139,6 +153,14 @@ jobs:
 
       - name: Install built package (no compile happens here)
         run: pacman -U --noconfirm pkg/*.pkg.tar.zst
+
+      - name: Load the installed node-pty addon with electron42
+        run: |
+          node_pty=/usr/lib/hermes-agent-desktop/app.asar.unpacked/dist/node_modules/node-pty
+          test -f "$node_pty/package.json"
+          env ELECTRON_RUN_AS_NODE=1 NODE_PTY_ROOT="$node_pty" \
+            /usr/lib/electron42/electron -e \
+            'const pty = require(process.env.NODE_PTY_ROOT); if (typeof pty.spawn !== "function") process.exit(1)'
 
       - name: Boot smoke test under xvfb
         run: |
@@ -149,22 +171,33 @@ jobs:
             hermes-desktop > /tmp/hermes-boot.log 2>&1
           rc=$?
           set -e
-          if [ "$rc" -eq 124 ]; then
-            echo "SMOKE-OK: app still running after 40s (killed by timeout)"
-          else
+          # Still running is not enough: Electron keeps a window open after a
+          # main-process exception, and a missing install stamp still boots.
+          stamp=$(grep -oE '"commit": *"[0-9a-f]{12}' /usr/lib/hermes-agent-desktop/install-stamp.json |
+            grep -oE '[0-9a-f]{12}$' || true)
+          if [ "$rc" -ne 124 ]; then
             echo "SMOKE-FAIL: exited with rc=$rc"
-            tail -n 60 /tmp/hermes-boot.log
-            exit 1
+          elif [ -z "$stamp" ]; then
+            echo "SMOKE-FAIL: no commit in the installed install-stamp.json"
+          elif grep -qE 'App threw an error during load|A JavaScript error occurred in the main process|Uncaught Exception' /tmp/hermes-boot.log; then
+            echo "SMOKE-FAIL: main process error while booting"
+          elif ! grep -qF "[hermes] install stamp: ${stamp}" /tmp/hermes-boot.log; then
+            echo "SMOKE-FAIL: packaged install stamp ${stamp} was not loaded"
+          else
+            echo "SMOKE-OK: app booted with install stamp ${stamp} and ran for 40s"
+            exit 0
           fi
+          tail -n 60 /tmp/hermes-boot.log
+          exit 1
 
   # ---------------------------------------------------------------------------
-  # Release + AUR sync: only after a merge to main or manual dispatch
-  # (never from pull_request — no secrets/releases on untrusted code).
+  # Release + AUR sync: only after a merge to main or a manual dispatch ON main
+  # (never from pull_request or another branch — no releases of unreviewed code).
   # ---------------------------------------------------------------------------
   release:
     runs-on: ubuntu-latest
     needs: [build, smoke]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
@@ -211,7 +244,9 @@ jobs:
               "$UPSTREAM_COMMIT" "$(sha256sum "$FILE" | cut -d' ' -f1)"
           } > /tmp/notes.md
           cat /tmp/notes.md
+          # --target: tag the commit that was built, not whatever main is now.
           gh release create "$TAG" "$FILE" \
+            --target "$GITHUB_SHA" \
             --title "hermes-agent-desktop-bin ${PKGVER}-${PKGREL}" \
             --notes-file /tmp/notes.md
           echo "Release created: $TAG"
@@ -219,35 +254,68 @@ jobs:
   aur-sync:
     runs-on: ubuntu-latest
     needs: release
+    if: github.ref == 'refs/heads/main'
+    # Keep AUR_SSH_KEY as a secret of this environment, restricted to main
+    # (Settings → Environments): pull requests from branches of this
+    # repository can read repository-level secrets.
+    environment: aur
+    # One publisher at a time; the main-HEAD check below drops stale runs.
+    concurrency:
+      group: aur-publish
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Compute release artifact sha256 and pin it into aur/
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           PKGVER=$(grep -oP '(?<=^pkgver=).*' PKGBUILD)
           PKGREL=$(grep -oP '(?<=^pkgrel=).*' PKGBUILD)
           FILE="hermes-agent-desktop-bin-${PKGVER}-${PKGREL}-x86_64.pkg.tar.zst"
-          URL="https://github.com/${{ github.repository }}/releases/download/v${PKGVER}-${PKGREL}/${FILE}"
-          curl -fsSL -o /tmp/pkg.pkg.tar.zst "$URL"
+          # Authenticated download: also works in a private copy of this repo.
+          gh release download "v${PKGVER}-${PKGREL}" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$FILE" --output /tmp/pkg.pkg.tar.zst
           SHA=$(sha256sum /tmp/pkg.pkg.tar.zst | cut -d' ' -f1)
           sed -i -E "s|^(sha256sums=\(')[0-9a-f]{64}('\))|\1${SHA}\2|" aur/PKGBUILD
           sed -i -E "s|^([[:space:]]*sha256sums = )[0-9a-f]{64}|\1${SHA}|" aur/.SRCINFO
+          # sed succeeds even when nothing matched: never publish a stale sum.
+          grep -qx "sha256sums=('${SHA}')" aur/PKGBUILD
+          grep -qxP "\tsha256sums = ${SHA}" aur/.SRCINFO
           echo "artifact sha256=${SHA}"
 
-      - name: Push aur/ to AUR git (publish)
+      - name: Push aur/ to AUR git (publish; dry run in copies of this repo)
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
         run: |
           set -euo pipefail
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur_ci && chmod 600 ~/.ssh/aur_ci
-          ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+          # A slower run for an older commit must not overwrite what a newer
+          # main has already published.
+          MAIN=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$MAIN" != "$GITHUB_SHA" ]; then
+            echo "main moved on to ${MAIN}; not publishing ${GITHUB_SHA}"
+            exit 0
+          fi
+          if [ -z "$AUR_SSH_KEY" ]; then
+            echo "::error::AUR_SSH_KEY is empty — store the AUR key as a secret of the aur environment"
+            exit 1
+          fi
           git config --global user.name "hermes-agent-desktop-bin CI"
           git config --global user.email "jabla@users.noreply.github.com"
           rm -rf /tmp/aur
-          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_ci -o IdentitiesOnly=yes" \
+          # Only the canonical repository publishes. Copies (forks, a CI test
+          # repository) clone the public AUR repository read-only and show the
+          # diff they would push.
+          if [ "$GITHUB_REPOSITORY" = jabla/hermes-agent-desktop-bin ]; then
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur_ci && chmod 600 ~/.ssh/aur_ci
+            ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+            export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_ci -o IdentitiesOnly=yes"
             git clone ssh://aur@aur.archlinux.org/hermes-agent-desktop-bin.git /tmp/aur
+          else
+            git clone https://aur.archlinux.org/hermes-agent-desktop-bin.git /tmp/aur
+          fi
           cp aur/PKGBUILD aur/.SRCINFO /tmp/aur/
           cd /tmp/aur
           PKGVER=$(grep -oP '(?<=^pkgver=).*' PKGBUILD)
@@ -258,9 +326,11 @@ jobs:
           git add PKGBUILD .SRCINFO
           if git diff --cached --quiet; then
             echo "AUR package up to date, nothing to push"
+          elif [ "$GITHUB_REPOSITORY" != jabla/hermes-agent-desktop-bin ]; then
+            echo "DRY RUN in ${GITHUB_REPOSITORY}: would push ${PKGVER}-${PKGREL} to the AUR:"
+            git diff --cached
           else
             git commit -m "Update to ${PKGVER}-${PKGREL}"
-            GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_ci -o IdentitiesOnly=yes" \
-              git push origin master
+            git push origin master
             echo "AUR updated to ${PKGVER}-${PKGREL}"
           fi
