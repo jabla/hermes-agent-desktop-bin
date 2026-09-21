@@ -162,33 +162,138 @@ jobs:
             /usr/lib/electron42/electron -e \
             'const pty = require(process.env.NODE_PTY_ROOT); if (typeof pty.spawn !== "function") process.exit(1)'
 
-      - name: Boot smoke test under xvfb
+      # Two boots. Without a runtime the launcher must leave the upstream
+      # first-run flow alone; with the runtime installed (pinned release of
+      # hermes-agent-bin, the package the launcher points at) the packaged app
+      # must run its backend from /opt/hermes-agent, with the environment the
+      # runtime's /usr/bin/hermes wrapper sets, and must not stop at the
+      # first-run setup screen. The second boot is the regression this package
+      # exists to prevent: the app insists on a policy-patched checkout in
+      # $HERMES_HOME/hermes-agent ('package-patch-missing') and would otherwise
+      # install a second runtime next to the installed one.
+      - name: Boot smoke tests under xvfb
         run: |
           mkdir -p "$HOME/.config"
           printf '%s\n' '--no-sandbox' > "$HOME/.config/hermes-desktop-flags.conf"
-          set +e
-          timeout 40 xvfb-run -a -s '-screen 0 1280x1024x24' \
-            hermes-desktop > /tmp/hermes-boot.log 2>&1
-          rc=$?
-          set -e
-          # Still running is not enough: Electron keeps a window open after a
-          # main-process exception, and a missing install stamp still boots.
+
           stamp=$(grep -oE '"commit": *"[0-9a-f]{12}' /usr/lib/hermes-agent-desktop/install-stamp.json |
             grep -oE '[0-9a-f]{12}$' || true)
-          if [ "$rc" -ne 124 ]; then
-            echo "SMOKE-FAIL: exited with rc=$rc"
-          elif [ -z "$stamp" ]; then
+          if [ -z "$stamp" ]; then
             echo "SMOKE-FAIL: no commit in the installed install-stamp.json"
-          elif grep -qE 'App threw an error during load|A JavaScript error occurred in the main process|Uncaught Exception' /tmp/hermes-boot.log; then
-            echo "SMOKE-FAIL: main process error while booting"
-          elif ! grep -qF "[hermes] install stamp: ${stamp}" /tmp/hermes-boot.log; then
-            echo "SMOKE-FAIL: packaged install stamp ${stamp} was not loaded"
-          else
-            echo "SMOKE-OK: app booted with install stamp ${stamp} and ran for 40s"
-            exit 0
+            exit 1
           fi
-          tail -n 60 /tmp/hermes-boot.log
-          exit 1
+
+          # stdout/stderr only carry the launcher's and Electron's output and
+          # the install stamp; the app's boot decisions ([boot] ..., backend
+          # readiness) go to the desktop log. Each boot NAME starts with a fresh one and leaves
+          # /tmp/hermes-boot-NAME.log (stdout) and /tmp/hermes-desktop-NAME.log.
+          desktop_log="$HOME/.hermes/logs/desktop.log"
+
+          # Still running is not enough: Electron keeps a window open after a
+          # main-process exception, and a missing install stamp still boots.
+          boot() {
+            rm -f "$desktop_log"
+            set +e
+            timeout 90 xvfb-run -a -s '-screen 0 1280x1024x24' \
+              hermes-desktop > "/tmp/hermes-boot-$1.log" 2>&1
+            rc=$?
+            set -e
+            cp "$desktop_log" "/tmp/hermes-desktop-$1.log" 2>/dev/null || : > "/tmp/hermes-desktop-$1.log"
+            if [ "$rc" -ne 124 ]; then
+              echo "SMOKE-FAIL: $1: exited with rc=$rc"
+              return 1
+            fi
+            if grep -qE 'App threw an error during load|A JavaScript error occurred in the main process|Uncaught Exception' "/tmp/hermes-boot-$1.log"; then
+              echo "SMOKE-FAIL: $1: main process error while booting"
+              return 1
+            fi
+            if ! grep -qF "[hermes] install stamp: ${stamp}" "/tmp/hermes-boot-$1.log"; then
+              echo "SMOKE-FAIL: $1: packaged install stamp ${stamp} was not loaded"
+              return 1
+            fi
+          }
+          fail() {
+            echo "--- stdout ($1) ---"
+            tail -n 40 "/tmp/hermes-boot-$1.log"
+            echo "--- desktop.log ($1) ---"
+            tail -n 40 "/tmp/hermes-desktop-$1.log"
+            exit 1
+          }
+          expect_logged() {
+            if ! grep -qF "$2" "/tmp/hermes-desktop-$1.log"; then
+              echo "SMOKE-FAIL: $1: desktop.log lacks: $2"
+              fail "$1"
+            fi
+          }
+
+          # 1) No runtime installed: upstream first-run flow, no runtime root.
+          boot noruntime || fail noruntime
+          expect_logged noruntime '[boot] Waiting for first-run setup choice'
+          if grep -qF 'Using Hermes source at' /tmp/hermes-desktop-noruntime.log; then
+            echo "SMOKE-FAIL: the launcher pointed the app at a runtime although none is installed"
+            fail noruntime
+          fi
+          echo "SMOKE-OK: no runtime installed, upstream first-run flow reached"
+
+          # 2) Runtime installed: the app must run its backend from
+          #    /opt/hermes-agent. Bump the pinned version and checksum together
+          #    with the desktop package: the assertion needs a runtime whose
+          #    `serve` mode the app supports.
+          runtime_ver=0.21.3-1
+          runtime_sum=4be9640abdc7920fbaad5ed3ce92637930350a0800852f371bad589178108cdc
+          runtime_pkg="hermes-agent-bin-${runtime_ver}-x86_64.pkg.tar.zst"
+          curl -fsSL -o "/tmp/${runtime_pkg}" \
+            "https://github.com/jabla/hermes-agent-bin/releases/download/v${runtime_ver}/${runtime_pkg}"
+          echo "${runtime_sum}  /tmp/${runtime_pkg}" | sha256sum -c -
+          pacman -U --noconfirm "/tmp/${runtime_pkg}"
+          test -x /opt/hermes-agent/venv/bin/python
+
+          # The app starts the runtime's python directly, not /usr/bin/hermes,
+          # so the launcher has to hand the backend that wrapper's environment.
+          # Record the running backend's environment (this shell has no
+          # HERMES_* variables of its own) and compare it after the boot.
+          backend_pid() {
+            local proc args
+            for proc in /proc/[0-9]*; do
+              mapfile -d '' -t args < "$proc/cmdline" 2>/dev/null || continue
+              if [ "${args[1]:-}" = -m ] && [ "${args[2]:-}" = hermes_cli.main ] && [ "${args[3]:-}" = serve ]; then
+                echo "${proc#/proc/}"
+                return 0
+              fi
+            done
+            return 1
+          }
+          (
+            for _ in $(seq 80); do
+              if pid=$(backend_pid) && tr '\0' '\n' < "/proc/${pid}/environ" > /tmp/hermes-backend.env; then
+                exit 0
+              fi
+              sleep 1
+            done
+            exit 1
+          ) &
+          env_watch=$!
+
+          boot runtime || fail runtime
+          wait "$env_watch" || true
+          expect_logged runtime '[boot] Using Hermes source at /opt/hermes-agent'
+          expect_logged runtime 'Hermes backend is ready. Finalizing desktop startup'
+          if grep -qE 'Waiting for first-run setup choice|package-patch-missing' /tmp/hermes-desktop-runtime.log; then
+            echo "SMOKE-FAIL: app stopped at the first-run setup screen although a runtime is installed"
+            fail runtime
+          fi
+          wrapper_vars=$(sed -nE 's/^export ([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' /usr/bin/hermes)
+          if [ -z "$wrapper_vars" ] || [ ! -s /tmp/hermes-backend.env ]; then
+            echo "SMOKE-FAIL: runtime: no backend environment recorded, or no exports in /usr/bin/hermes to compare"
+            fail runtime
+          fi
+          for var in $wrapper_vars; do
+            if ! grep -q "^${var}=" /tmp/hermes-backend.env; then
+              echo "SMOKE-FAIL: runtime: the backend lacks ${var}, which /usr/bin/hermes sets"
+              fail runtime
+            fi
+          done
+          echo "SMOKE-OK: app booted on the installed package runtime with the environment of /usr/bin/hermes:" $wrapper_vars
 
   # ---------------------------------------------------------------------------
   # Release + AUR sync: only after a merge to main or a manual dispatch ON main

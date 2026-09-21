@@ -11,7 +11,7 @@ _upstream=Hermes                 # productName + executableName
 _pkgver_tag=v2026.9.14
 _commit=345cd2b057a452236de401d3534b8502a7465e8d
 pkgver=0.21.3
-pkgrel=2
+pkgrel=3
 pkgdesc="Official Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
 url='https://github.com/NousResearch/hermes-agent'
@@ -21,6 +21,7 @@ depends=(
   'nodejs>=22.22' 'npm' 'uv' 'xdg-utils'
 )
 optdepends=(
+  'hermes-agent-bin: run the app on the installed Hermes runtime instead of a local install'
   'libayatana-appindicator: tray indicator support'
   'google-chrome: local browser automation (or chromium)'
   'chromium: local browser automation (or google-chrome)'
@@ -41,6 +42,7 @@ source=(
   'runtime-policy.patch'
   'hermes-desktop'
   'launcher.test.cjs'
+  'launcher-runtime-root.test.cjs'
   'runtime.test.cjs'
   'runtime-policy.test.py'
 )
@@ -55,8 +57,9 @@ sha256sums=('47df72ebd3f9c96d806a94541163f7fe7d7ce5b84f85c1d3787e6dfeea1d7834'
             'fa8933a96e58575e7d4f876a7eb380d6c1723233832b787a46fb158f79df7718'
             '960009893274b567eca91f42ae168661efda18646f2783b75b831e1d71190cb1'
             '9fca70bad0c6db28e9499761a570e8bca83c9666e6bb8ec35401b8aef3424a8d'
-            '700eaf971f8aeedf0268cd85954235d1770b786b19ca7e9d7905bf17aed86d44'
+            'ac7b80c86ad6e3f2195863e1f2d100f1cce8c98e9b097dc6cf121a636afc7b84'
             'dcb84ac7c5f5a7168d089ba082a8c8c77cf3955abc79775f530aee870a30d5df'
+            '8ee5ff76ab7afb5ddeade96ed82bcc7e546e17d9e9539e08931084e03ee79c7f'
             '1a39719fd6b6ac2e773e6f72bd55ef313469734cf72dbe1f9adf7bff0979c873'
             '9be2b77733674bbfdb1a39ddc902ac9f751f49ce7398675c89190eb0cc6759ea')
 
@@ -167,6 +170,7 @@ check() {
   _set_npm_env
   export npm_config_offline=true
   node "${srcdir}/launcher.test.cjs"
+  node "${srcdir}/launcher-runtime-root.test.cjs"
   node "${srcdir}/runtime.test.cjs" "$PWD/scripts/install.sh" "$PWD"
   python -B "${srcdir}/runtime-policy.test.py" "$PWD"
   npm run typecheck --workspace apps/desktop

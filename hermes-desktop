@@ -16,6 +16,27 @@ export HERMES_DESKTOP_IS_PACKAGED=1
 export HERMES_DESKTOP_RESOURCES_PATH=/usr/lib/hermes-agent-desktop
 export HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME=1
 
+# Use the runtime installed by the hermes-agent(-bin) package when it is
+# installed, instead of the app-managed checkout in $HERMES_HOME/hermes-agent.
+# Without this the packaged app insists on a policy-patched checkout and stops
+# at the first-run setup screen ('package-patch-missing' in packaged-bootstrap
+# decisions), which would install a second runtime next to the one the package
+# already provides. The app honours HERMES_DESKTOP_HERMES_ROOT before every
+# runtime and policy check, so no app patch is involved; an explicitly set
+# value is never overwritten, and installations without /opt/hermes-agent keep
+# the upstream first-run flow. RESOURCES_PATH/PACKAGE_MANAGED_RUNTIME stay as
+# they are: the in-app updater must stay disabled either way.
+#
+# The app then starts the runtime's venv python directly instead of going
+# through /usr/bin/hermes, so the backend gets that wrapper's environment
+# here: the venv is root-owned, and optional dependencies installed on demand
+# live in the user's durable target, which the CLI and the desktop must share.
+if [[ -z "${HERMES_DESKTOP_HERMES_ROOT:-}" && -x /opt/hermes-agent/venv/bin/python ]]; then
+  export HERMES_DESKTOP_HERMES_ROOT=/opt/hermes-agent
+  export HERMES_DISABLE_LAZY_INSTALLS=1
+  export HERMES_LAZY_INSTALL_TARGET="${XDG_DATA_HOME:-${HOME}/.local/share}/hermes-agent/python"
+fi
+
 # Reuse a local browser for agent tools, not the user's browser profile.
 # Hermes' own .env loader still honors an explicitly configured browser path.
 if [[ -z "${AGENT_BROWSER_EXECUTABLE_PATH:-}" ]]; then

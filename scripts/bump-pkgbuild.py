@@ -195,12 +195,27 @@ def source_sums(info: dict[str, list[str]]) -> dict[str, str]:
     return dict(zip(names, info.get("sha256sums", [])))
 
 
+# Divergences from the AUR source package that are deliberate — see README,
+# "Runtime". The launcher points the app at the runtime installed by
+# hermes-agent(-bin) when one is installed (same filename as the reference,
+# deliberately different content), its own test exists only here, and the
+# optdepends entry documents the choice. Everything else (patches, other
+# sources, checksums, dependencies) must keep matching the reference.
+LOCAL_ONLY_SOURCES = {"launcher-runtime-root.test.cjs"}
+DIVERGENT_CHECKSUMS = {"hermes-desktop"}
+DIVERGENT_OPTDEPENDS = {
+    "hermes-agent-bin: run the app on the installed Hermes runtime instead of a local install"
+}
+
+
 def check_reference_drift() -> list[str]:
     """Compare PKGBUILD with the AUR source package it is kept in sync with.
 
     Warns instead of failing: the reference may simply be one release ahead
     or behind. Source files and runtime dependencies must match at any
-    version, checksums only while both build the same pkgver.
+    version, checksums only while both build the same pkgver — minus the
+    deliberate divergences in LOCAL_ONLY_SOURCES, DIVERGENT_CHECKSUMS and
+    DIVERGENT_OPTDEPENDS.
     """
     try:
         ref = parse_srcinfo(fetch(REFERENCE_SRCINFO).decode())
@@ -211,11 +226,13 @@ def check_reference_drift() -> list[str]:
     drift = []
     for key in ("depends", "optdepends"):
         here, there = set(ours.get(key, [])), set(ref.get(key, []))
+        if key == "optdepends":
+            here -= DIVERGENT_OPTDEPENDS
         if here != there:
             drift.append(f"{key}: only here {sorted(here - there)}, "
                          f"only in {REFERENCE} {sorted(there - here)}")
     # Local files only: the upstream tarball's name carries the release tag.
-    here = {s for s in ours.get("source", []) if "://" not in s}
+    here = {s for s in ours.get("source", []) if "://" not in s} - LOCAL_ONLY_SOURCES
     there = {s for s in ref.get("source", []) if "://" not in s}
     if here != there:
         drift.append(f"source files: only here {sorted(here - there)}, "
@@ -224,6 +241,8 @@ def check_reference_drift() -> list[str]:
     our_ver, ref_ver = ours.get("pkgver", ["?"])[0], ref.get("pkgver", ["?"])[0]
     if our_ver == ref_ver:
         for name in sorted(our_sums.keys() & ref_sums.keys()):
+            if name in DIVERGENT_CHECKSUMS or name in LOCAL_ONLY_SOURCES:
+                continue
             if our_sums[name] != ref_sums[name]:
                 drift.append(f"{name}: sha256 {our_sums[name][:12]}… here, "
                              f"{ref_sums[name][:12]}… in {REFERENCE}")
