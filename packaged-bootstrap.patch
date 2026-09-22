@@ -1,6 +1,6 @@
 --- a/scripts/install.sh
 +++ b/scripts/install.sh
-@@ -553,16 +553,29 @@
+@@ -584,16 +584,29 @@
  # ============================================================================
  
  install_uv() {
@@ -34,7 +34,7 @@
      local _managed_uv="$HERMES_HOME/bin/uv"
  
      if [ -x "$_managed_uv" ]; then
-@@ -1469,7 +1482,77 @@
+@@ -1522,7 +1535,77 @@
  # Installation
  # ============================================================================
  
@@ -112,7 +112,7 @@
      log_info "Installing to $INSTALL_DIR..."
  
      # An interrupted previous clone leaves a .git with no initial commit, where
-@@ -1715,6 +1798,25 @@
+@@ -1768,6 +1851,25 @@
          return 0
      fi
  
@@ -138,7 +138,7 @@
      if [ "$DISTRO" = "termux" ]; then
          log_info "Creating virtual environment with Termux Python..."
  
-@@ -2590,6 +2685,11 @@
+@@ -2647,6 +2749,11 @@
  }
  
  configure_browser_env_from_system_browser() {
@@ -150,7 +150,7 @@
      local env_file="$HERMES_HOME/.env"
      local browser_path="${DETECTED_BROWSER_EXECUTABLE:-}"
  
-@@ -2696,10 +2796,20 @@
+@@ -2753,10 +2860,20 @@
          # Other systems must install Chromium dependencies manually.
          if [ "$SKIP_BROWSER" = true ]; then
              log_info "Skipping Playwright/Chromium install (--skip-browser)"
@@ -175,7 +175,7 @@
          else
          log_info "Installing browser engine (Playwright Chromium)..."
          strip_snap_browser_override
-@@ -2778,8 +2888,8 @@
+@@ -2835,8 +2952,8 @@
                      ;;
              esac
          fi
@@ -185,7 +185,7 @@
      fi
  
      # Install TUI dependencies
-@@ -3130,7 +3240,11 @@
+@@ -3187,7 +3304,11 @@
      echo -e "   ${GREEN}hermes config${NC}       View/edit configuration"
      echo -e "   ${GREEN}hermes config edit${NC}  Open config in editor"
      echo -e "   ${GREEN}hermes gateway install${NC} Install gateway service (messaging + cron)"
@@ -200,7 +200,7 @@
      echo -e "${CYAN}─────────────────────────────────────────────────────────${NC}"
 --- a/apps/desktop/electron/bootstrap-runner.ts
 +++ b/apps/desktop/electron/bootstrap-runner.ts
-@@ -321,6 +321,16 @@
+@@ -330,6 +330,16 @@
    emit,
    _download = downloadInstallScript
  }) {
@@ -217,7 +217,7 @@
    // 1. Dev shortcut: prefer a local checkout's installer so we can iterate
    //    without pushing. SOURCE_REPO_ROOT comes from main.ts (path.resolve
    //    of APP_ROOT/../..).
-@@ -658,9 +668,8 @@
+@@ -685,9 +695,8 @@
  // ---------------------------------------------------------------------------
  
  // Build the installer branch/pin args from the install stamp. The commit pin
@@ -229,15 +229,16 @@
  // passed as -Commit/--commit — only the branch is used (#50823 / #50864 review).
  function buildPinArgs(installStamp, { pinCommit = true } = {}) {
    const args = []
-@@ -871,6 +880,7 @@
+@@ -913,6 +922,7 @@
      onEvent,
      abortSignal,
      pinExistingCheckout = false,
 +    policyOnly = false,
-     writeMarker // callback to write the bootstrap-complete marker; main.ts provides
+     writeMarker, // callback to write the bootstrap-complete marker; main.ts provides
+     gitBinary // probed git path from main.ts; bare 'git' when absent
    } = opts
+@@ -995,9 +1005,18 @@
  
-@@ -947,8 +957,17 @@
      abortSignal?.throwIfAborted()
  
 +    // main.ts only requests this for a healthy, completed install. Recheck HEAD
@@ -256,7 +257,7 @@
        protocolVersion: manifest.protocol_version || manifest.protocolVersion || null
      })
  
-@@ -957,7 +976,7 @@
+@@ -1005,7 +1024,7 @@
      //    invoked -- install.ps1's own -NonInteractive handler in those stages
      //    emits skipped=true. We trust the protocol rather than filtering
      //    client-side.
@@ -265,7 +266,7 @@
        if (abortSignal && abortSignal.aborted) {
          emit({ type: 'failed', error: 'bootstrap cancelled by user' })
  
-@@ -1025,6 +1044,21 @@
+@@ -1081,6 +1100,21 @@
    }
  }
  
@@ -287,7 +288,7 @@
  export {
    buildPinArgs,
    buildPosixPinArgs,
-@@ -1033,6 +1067,7 @@
+@@ -1090,6 +1124,7 @@
    installedAgentInstallScript,
    installRefForStamp,
    isPinnedCommit,
@@ -303,7 +304,7 @@
  import fs from 'node:fs'
  import os from 'node:os'
  import path from 'node:path'
-@@ -13,6 +14,7 @@
+@@ -14,6 +15,7 @@
    installedAgentInstallScript,
    installRefForStamp,
    isPinnedCommit,
@@ -311,7 +312,7 @@
    resolveInstallScript,
    resolveMarkerPinnedCommit,
    runBootstrap
-@@ -21,10 +23,114 @@
+@@ -22,10 +24,114 @@
  const SCRIPT_NAME = process.platform === 'win32' ? 'install.ps1' : 'install.sh'
  const ZERO_COMMIT = '0000000000000000000000000000000000000000'
  
@@ -497,7 +498,7 @@
      activeCommit: 'a'.repeat(40),
 --- a/apps/desktop/electron/main.ts
 +++ b/apps/desktop/electron/main.ts
-@@ -80,7 +80,7 @@
+@@ -89,7 +89,7 @@
    resolveLinuxPasswordStore
  } from './bootstrap-platform'
  import { decideBootstrapRepair } from './bootstrap-repair-guard'
@@ -506,9 +507,9 @@
  import {
    BROWSER_WINDOW_HEIGHT,
    BROWSER_WINDOW_MIN_HEIGHT,
-@@ -4707,7 +4707,8 @@
+@@ -4976,7 +4976,8 @@
  
-   return classifyActiveRuntime(readBootstrapMarker(), BOOTSTRAP_MARKER_SCHEMA_VERSION, isActiveRuntimeUsable(), {
+   return classifyActiveRuntime(readBootstrapMarker(), BOOTSTRAP_MARKER_SCHEMA_VERSION, await isActiveRuntimeUsable(), {
      activeCommit: expectedCommit ? resolveCheckoutHead(ACTIVE_HERMES_ROOT) : null,
 -    expectedCommit
 +    expectedCommit,
@@ -516,7 +517,7 @@
    })
  }
  
-@@ -4990,16 +4991,17 @@
+@@ -5284,16 +5285,17 @@
    }
  }
  
@@ -536,9 +537,9 @@
      installStamp: INSTALL_STAMP,
      isPackaged: IS_PACKAGED,
      platform: process.platform
-@@ -5041,12 +5043,12 @@
+@@ -5335,12 +5337,12 @@
    //    bootstrap when the runtime itself is unusable.
-   const activeRuntime = activeRuntimeState()
+   const activeRuntime = await activeRuntimeState()
  
 -  if (activeRuntime.usabilityReason === 'commit-mismatch') {
 +  if (activeRuntime.usabilityReason === 'commit-mismatch' || activeRuntime.usabilityReason === 'package-patch-missing') {
@@ -552,7 +553,7 @@
    }
  
    if (activeRuntime.shouldUseActiveRuntime && !bootstrapRepairRequested) {
-@@ -5195,7 +5197,8 @@
+@@ -5499,7 +5501,8 @@
    // will rewire startup to spawn the window first and route bootstrap events
    // to a renderer-side install overlay.
    if (backend.kind === 'bootstrap-needed') {
@@ -562,7 +563,7 @@
  
      if (await handOffWindowsBootstrapRecovery('bootstrap-needed')) {
        const handoffError: Error & { isBootstrapFailure?: boolean; bootstrapHandedOff?: boolean } = new Error(
-@@ -5239,6 +5242,7 @@
+@@ -5544,6 +5547,7 @@
        logRoot: path.join(HERMES_HOME, 'logs'),
        abortSignal: bootstrapAbortController.signal,
        pinExistingCheckout: PACKAGE_MANAGED_RUNTIME,
