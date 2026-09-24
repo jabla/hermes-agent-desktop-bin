@@ -1,9 +1,10 @@
 diff --git a/apps/desktop/src/store/voice-prefs.test.ts b/apps/desktop/src/store/voice-prefs.test.ts
+index 3cf9c7e..cec75d5 100644
 --- a/apps/desktop/src/store/voice-prefs.test.ts
 +++ b/apps/desktop/src/store/voice-prefs.test.ts
-@@ -9,13 +9,17 @@
- 
- import { $voiceStopPhrase, applyVoiceStopPhraseFromConfig } from './voice-prefs'
+@@ -16,13 +16,17 @@ import {
+   applyVoiceStopPhraseFromConfig
+ } from './voice-prefs'
  
 +// jsdom methods live on the prototype; the Node fallback has own methods.
 +const storageMethods =
@@ -20,7 +21,7 @@ diff --git a/apps/desktop/src/store/voice-prefs.test.ts b/apps/desktop/src/store
  
        if (fails) {
          write.mockImplementation(() => {
-@@ -44,7 +48,7 @@
+@@ -51,7 +55,7 @@ it('migrates the legacy preference once, not on every refresh', async () => {
        localStorage.clear()
        vi.resetModules()
        const prefs = await import('./voice-prefs')
