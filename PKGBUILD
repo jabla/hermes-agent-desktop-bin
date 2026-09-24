@@ -8,9 +8,9 @@
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
-_pkgver_tag=v2026.9.21
-_commit=d337b736aa1e8ebecfab043842d13e4a2d2f48a3
-pkgver=0.21.4
+_pkgver_tag=v2026.9.24
+_commit=f97608f178d1ffeca59860195ab7da295f7c8e5f
+pkgver=0.21.5
 pkgrel=1
 pkgdesc="Official Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
@@ -50,7 +50,7 @@ source=(
 # the tarball sum; after editing a local file run
 # `python3 scripts/bump-pkgbuild.py --sync-sums`, or the build fails at
 # "Validating source files".
-sha256sums=('c38cd7639707fe695f94ecd948ee7a9ce7de0c57461e39fb022966d79a692a65'
+sha256sums=('15b15ce4e6ec8ea424a081823709d1e17f0943e7b42b59597d24ebb94cbd1742'
             'ee465a1aa2ad5789fa5c7b3a89993bbf0e68efddbf27c93109519b72a4cb90f7'
             '2bf39d158f144997f6a854dce37ada8c61aea6a038de868183f4e2ae78c35b9e'
             '7f8500e475a13466ecba2bb74e73fbbcba8dcb70bcbf4e789faf7a8f27df0cac'
