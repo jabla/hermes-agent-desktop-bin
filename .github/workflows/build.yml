@@ -4,12 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Run the upstream bump check now (normally schedule-only)"
+        description: "Bump PKGBUILD to the latest upstream release and open a PR"
         type: boolean
         default: false
-  schedule:
-    # check every 2 hours for new upstream tags (release cadence is ~weekly)
-    - cron: '23 */2 * * *'
   pull_request:
   push:
     branches: [main]
@@ -20,17 +17,15 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Schedule: detect new upstream release -> open auto-merge PR (never commits
-  # to main directly). Build/smoke/release/aur-sync are triggered by the PR
-  # checks and the push that follows the merge.
+  # Manual dispatch with "bump": move PKGBUILD to the latest upstream release
+  # and open an auto-merge PR (never commits to main directly). Build/smoke/
+  # release/aur-sync are triggered by the PR checks and the push that follows
+  # the merge. There is no schedule: almost every upstream release needs patch
+  # work, and upstream releases without a desktop app (v0.21.6) must not be
+  # packaged, so a maintainer starts the bump after reading the release.
   # ---------------------------------------------------------------------------
   bump:
-    # The schedule only bumps the canonical repository; copies (forks, a CI
-    # test repository) bump on manual dispatch only and idle for free. The
-    # repository variable BUMP_PAUSED=true pauses the schedule there too,
-    # e.g. while packaging changes are in progress; a manual dispatch with
-    # "bump" still runs.
-    if: (github.event_name == 'schedule' && github.repository == 'jabla/hermes-agent-desktop-bin' && vars.BUMP_PAUSED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.bump)
+    if: github.event_name == 'workflow_dispatch' && inputs.bump
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
@@ -94,11 +89,11 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Build + smoke: run for PRs (merge gate), pushes to main (after merge) and
-  # manual dispatch. Never on schedule (bump job handles that).
+  # manual dispatch.
   # ---------------------------------------------------------------------------
   build:
-    # not on schedule; also skipped when a manual dispatch only runs the bump
-    if: github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && inputs.bump)
+    # skipped when a manual dispatch only runs the bump
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.bump) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     container:
