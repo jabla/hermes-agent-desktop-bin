@@ -300,8 +300,8 @@ jobs:
           #    app on that runtime, and the assertion needs a runtime whose
           #    `serve` mode the app supports. Change version and checksum
           #    together.
-          runtime_ver=0.21.4-1
-          runtime_sum=7589c81b0616aba1e0275c71fa4beca586d64e990693916f0e5b91d7cb5fc5fb
+          runtime_ver=0.21.6-1
+          runtime_sum=ec27f404b377abeedc164fa00e39aa004efe4ff5c4e11e4f9451bc6f8d2cab9a
           runtime_pkg="hermes-agent-bin-${runtime_ver}-x86_64.pkg.tar.zst"
           curl -fsSL -o "/tmp/${runtime_pkg}" \
             "https://github.com/jabla/hermes-agent-bin/releases/download/v${runtime_ver}/${runtime_pkg}"
