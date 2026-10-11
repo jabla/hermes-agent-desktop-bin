@@ -94,7 +94,9 @@ jobs:
   # them: its PR run built and smoked the change, and release would skip.
   # ---------------------------------------------------------------------------
   plan:
-    # skipped when a manual dispatch only runs the bump
+    # Skipped when a manual dispatch only runs the bump. This also keeps
+    # build, smoke and release off that run: build only runs when plan was
+    # not skipped.
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.bump) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -109,8 +111,12 @@ jobs:
         run: |
           set -euo pipefail
           # PKGBUILD of the pushed commit, read without a checkout.
-          pkgbuild=$(gh api -H 'Accept: application/vnd.github.raw' \
-            "repos/${GITHUB_REPOSITORY}/contents/PKGBUILD?ref=${GITHUB_SHA}")
+          if ! pkgbuild=$(gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/${GITHUB_REPOSITORY}/contents/PKGBUILD?ref=${GITHUB_SHA}"); then
+            echo "::warning::could not read PKGBUILD at ${GITHUB_SHA}: building"
+            echo released=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           PKGVER=$(grep -oP '(?<=^pkgver=).*' <<<"$pkgbuild")
           PKGREL=$(grep -oP '(?<=^pkgrel=).*' <<<"$pkgbuild")
           TAG="v${PKGVER}-${PKGREL}"
@@ -125,7 +131,9 @@ jobs:
 
   build:
     needs: plan
-    if: needs.plan.outputs.released != 'true'
+    # Skip only when plan reported an existing release. A failed plan must not
+    # skip build and smoke: skipped required checks count as passed.
+    if: ${{ !cancelled() && needs.plan.result != 'skipped' && needs.plan.outputs.released != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     container:
@@ -208,6 +216,8 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     needs: build
+    # Explicit, or a failed plan would skip it despite a green build.
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     timeout-minutes: 20
     container:
       image: archlinux:latest
@@ -390,7 +400,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     needs: [build, smoke]
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.smoke.result == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     timeout-minutes: 10
     permissions:
       contents: write
