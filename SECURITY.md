@@ -32,6 +32,11 @@ vulnerabilities there.
   reports drift from it and never copies files automatically. Deliberate
   divergences are listed in `scripts/bump-pkgbuild.py` (none at the moment)
   and in the README.
+- A new version's release can take the package that the merged pull
+  request's run built and smoke-tested instead of building it again on
+  `main`. This only happens for a pull request from this repository whose
+  run built exactly the pushed tree (`build-info`) while its artifact still
+  exists (3 days); fork pull requests and every other case build on `main`.
 - The `smoke` job downloads a pinned release artifact of `hermes-agent-bin`
   (version and sha256 hard-coded in the workflow, verified before install) to
   boot the app against a real package runtime.
