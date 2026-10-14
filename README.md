@@ -8,70 +8,65 @@ Prebuilt Arch Linux package for the [Hermes Agent desktop app](https://github.co
 yay -S hermes-agent-desktop-bin
 ```
 
-This replaces the source package `hermes-agent-desktop` (they conflict) and behaves like it: same patches, launcher and runtime dependencies. The launcher points the app at the runtime installed by `hermes-agent` / `hermes-agent-bin` when it is installed, so nothing is installed twice; without one the app keeps the upstream first-run flow (see [Runtime](#runtime)). Either way the app cannot update itself and uses the system `uv` and Node.js — update through your AUR helper. Launcher: `hermes-desktop`.
+This replaces the source package `hermes-agent-desktop` (they conflict) and behaves like it: same patches, launcher and dependencies. The app runs on the Hermes runtime of `hermes-agent` or `hermes-agent-bin` (a dependency) and never installs one of its own (see [Runtime](#runtime)). For the prebuilt runtime, install `hermes-agent-bin` first or pick it when your AUR helper asks which package should provide `hermes-agent`; otherwise the helper may build the source package `hermes-agent`. It cannot update itself: update through your AUR helper. Launcher: `hermes-desktop`.
 
 ## How it works
 
 - `PKGBUILD` — the *build* recipe, run in CI (archlinux container, non-root makepkg, including `check()`). Builds the app against the system `electron42` runtime, so the package stays small instead of shipping Electron.
-- `*.patch`, `hermes-desktop`, `*.test.cjs`, `runtime-policy.test.py` — vendored from the AUR source package [hermes-agent-desktop](https://aur.archlinux.org/packages/hermes-agent-desktop), verbatim except for `hermes-desktop` (runtime root, see [Runtime](#runtime)) and `launcher-runtime-root.test.cjs`, which covers that change and exists only here.
+- `*.patch`, `hermes-desktop`, `launcher.test.cjs` — vendored verbatim from the AUR source package [hermes-agent-desktop](https://aur.archlinux.org/packages/hermes-agent-desktop).
 - `aur/PKGBUILD` — the AUR *wrapper*, source of truth for [hermes-agent-desktop-bin on the AUR](https://aur.archlinux.org/packages/hermes-agent-desktop-bin). Its `source` points at the GitHub Release artifact, stored under a name that differs from the package makepkg writes; `package()` only extracts the payload.
-- `scripts/bump-pkgbuild.py` — bump automation, runs every 2 hours: detects a new upstream tag, edits both PKGBUILDs + `.SRCINFO`, opens an auto-merge PR, and reports drift from `hermes-agent-desktop` (in the log and the bump PR).
+- `scripts/bump-pkgbuild.py` — bump automation, started by hand: detects a new upstream tag, edits both PKGBUILDs + `.SRCINFO`, opens an auto-merge PR, and reports drift from `hermes-agent-desktop` (in the log and the bump PR).
 - `scripts/check-metadata.sh` — fails the build when `PKGBUILD` and `aur/PKGBUILD` disagree on version, dependencies, provides or conflicts.
 - `.github/workflows/build.yml` — `bump` / `plan` / `build` / `smoke` / `release` / `aur-sync` pipeline.
 
 ## Runtime
 
-The packaged app needs a Hermes Agent runtime to talk to. This package prefers
-the one the user already has:
+The app needs a Hermes Agent runtime. `hermes-agent` is a dependency, met by
+the AUR package `hermes-agent` or by `hermes-agent-bin`, which provides it.
 
-- `hermes-agent-bin` (or `hermes-agent`) installed → the launcher exports
-  `HERMES_DESKTOP_HERMES_ROOT=/opt/hermes-agent`, but only when
-  `/opt/hermes-agent/venv/bin/python` exists and only when the variable is not
-  set already. The app evaluates it before every runtime and policy check, runs
-  its backend from `/opt/hermes-agent`, and never starts an install of its own.
-  The backend then starts the runtime's venv python directly instead of
-  `/usr/bin/hermes`, so the launcher also exports that wrapper's environment
-  (`HERMES_DISABLE_LAZY_INSTALLS=1`, `HERMES_LAZY_INSTALL_TARGET` under
-  `$XDG_DATA_HOME/hermes-agent/python`): the venv is root-owned, and the
-  optional dependencies installed on demand (voice, provider SDKs, …) live in
-  the user's durable target, shared by the CLI and the desktop.
-- No package runtime → unchanged upstream behaviour: the first-run setup offers
-  to install a runtime into `~/.hermes/hermes-agent`.
+- The launcher exports `HERMES_DESKTOP_HERMES=/usr/bin/hermes` unless it is
+  set already. The app starts its backend through that CLI wrapper, so the
+  backend gets the wrapper's environment: lazy installs off, optional
+  dependencies in the user's durable target, shared by the CLI and the desktop.
+- `HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME=1` (also from the launcher) makes the
+  patched app refuse the in-app updater and the first-run bootstrap
+  (`package-managed-runtime.patch`, `package-managed-bootstrap.patch`). It
+  never downloads or writes an agent tree, so versions come from pacman.
 
-Without that override the packaged app insists on a policy-patched checkout in
-`~/.hermes/hermes-agent`: `packaged-bootstrap.patch` (vendored from the source
-package) reports `package-patch-missing` for anything else, and *every*
-`bootstrap-needed` backend goes through the first-run setup gate. A machine
-that already has a runtime therefore gets a second one (~0.5-1 GB: repository,
-venv, python-deps and node-deps stages) plus a click on "Install Hermes
-locally" after the update that introduces it.
+Up to 0.21.5 the runtime was optional: the launcher pointed the app at
+`/opt/hermes-agent` when it existed, otherwise the app installed its own
+runtime into `~/.hermes/hermes-agent`. Since 0.22.0 that directory is unused.
+It can be removed together with any `hermes` launchers in `~/.local/bin` that
+point into it; `~/.hermes` itself holds the configuration and sessions.
 
-The hardening itself is untouched: `HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME=1`
-stays exported, so the in-app updater stays disabled ("This Hermes runtime is
-managed by the system package. Update hermes-agent-desktop with your package
-manager.") and versions keep coming from pacman. The `hermes-agent-bin`
-optdepends entry points users at this behaviour.
+Differences from `hermes-agent-desktop` that stay in `PKGBUILD`:
 
-This is the package's only deliberate divergence from `hermes-agent-desktop`;
-`scripts/bump-pkgbuild.py` lists it explicitly so the drift report stays
-meaningful, and the CI smoke job covers both paths.
+- `check()` runs the upstream tests covering the patched files, not the full
+  suite (see the pipeline below).
+- `prepare()` stops when upstream locks a newer Electron major than
+  `electron42`.
+- `package()` stops on an unknown electron-builder resource.
 
 ## Maintenance
 
 - **New upstream release**: there is no scheduled check; watch the upstream repository's releases (*Watch > Custom > Releases*) and read the release notes first: almost every release needs patch work here, and releases without a desktop app (v0.21.6) are not packaged. Then run the workflow by hand with `bump` (`gh workflow run build-package -f bump=true`). The `bump` job moves `PKGBUILD` to the new tag (tag, commit, source checksum), updates `aur/PKGBUILD` and `.SRCINFO`, and opens an auto-merge PR. A new version starts at `pkgrel=1`; a new tag with an unchanged version gets the next `pkgrel` (otherwise its release tag would already exist); an older version aborts the bump. An open bump PR is updated with `main` when the job runs again, because the ruleset only merges up-to-date branches. The job authenticates with the `BUMP_TOKEN` secret — a fine-grained PAT (Contents + Pull requests: read/write) — because the default `GITHUB_TOKEN` produces a bot-authored PR whose checks need manual approval and whose merge never triggers the release pipeline. The job logs the token identity it used and fails if the secret is missing or rejected; its read-only calls to upstream's API use the workflow token, because unauthenticated calls hit the runners' shared rate limit. The PAT is created without an expiry date, so revocation — not rotation — is the deliberate step: delete it under *Settings → Developer settings → Fine-grained tokens* and `gh secret delete BUMP_TOKEN` here and in `hermes-agent-bin`.
-- **Runtime in CI**: `smoke` installs a pinned `hermes-agent-bin` release
-  artifact (version + sha256 in the workflow) to boot the app on a real package
-  runtime, and fails when the app stops at the first-run setup screen instead
-  or when the running backend lacks a variable the runtime's `/usr/bin/hermes`
-  exports. Boot decisions are asserted on `~/.hermes/logs/desktop.log`, not on
-  stdout, which only carries Electron's output and the install stamp.
-  Pin the `hermes-agent-bin` release the AUR ships, never one older than the
-  desktop version, so `smoke` boots the combination users get; the job checks
-  the download against the pinned checksum.
-- **Pipeline**: `plan` -> `build` -> `smoke` -> `release` -> `aur-sync`. On a push to `main` whose `pkgver-pkgrel` is already released (CI, scripts, docs, `aur/`), `plan` skips `build`, `smoke` and `release`: the pull request run checked the change, and `aur-sync` publishes `aur/` against the existing release. A manual dispatch on `main` always builds. If `plan` fails, everything builds. `build` and `smoke` also run on pull requests (merge gate): `build` runs `check()` (typecheck, the upstream tests covering the patched files, the packaging tests, node-pty under `electron42`; upstream's full suite is left to upstream's CI), validates `aur/.SRCINFO` and the metadata of both PKGBUILDs, and builds `aur/PKGBUILD` from the fresh artifact the way AUR users' makepkg does — its payload must match the artifact file for file (paths, modes, links, sha256), and a rebuild must still pass the checksum. `smoke` installs the package with its declared dependencies, loads the node-pty addon with `electron42`, checks that the app reports the package version and boots the app under xvfb until the packaged install stamp is logged. `release` and `aur-sync` only run for `main`; `release` writes notes linking the upstream release and the upstream compare view, and `aur-sync` injects the released artifact's sha256 into `aur/` and pushes to the AUR only while its commit is still `main`'s HEAD. Upstream tag and commit are pinned in `PKGBUILD` (`_pkgver_tag`, `_commit`).
+- **Runtime in CI**: `hermes-agent` comes from the AUR, so pacman cannot
+  install it in CI. `build` installs every other declared dependency and runs
+  makepkg with `--nodeps`. `smoke` installs a pinned `hermes-agent-bin` release
+  artifact (`RUNTIME_VER` + `RUNTIME_SUM` in the workflow) together with the
+  package and boots the app on it. It fails when the backend does not start
+  through `/usr/bin/hermes` or lacks a variable that wrapper exports. It also
+  fails when the app stops at the first-run setup or writes
+  `~/.hermes/hermes-agent`. Boot decisions are asserted on
+  `~/.hermes/logs/desktop.log`, not on stdout, which only carries Electron's
+  output and the install stamp. Pin the `hermes-agent-bin` release the AUR
+  ships, never one older than the desktop version, so `smoke` boots the
+  combination users get; the job checks the download against the pinned
+  checksum.
+- **Pipeline**: `plan` -> `build` -> `smoke` -> `release` -> `aur-sync`. On a push to `main` whose `pkgver-pkgrel` is already released (CI, scripts, docs, `aur/`), `plan` skips `build`, `smoke` and `release`: the pull request run checked the change. `aur-sync` still publishes `aur/` against the existing release. A manual dispatch on `main` always builds. If `plan` fails, everything builds. `build` and `smoke` also run on pull requests (merge gate): `build` runs `check()` (typecheck, the upstream tests covering the patched files, the launcher test, node-pty under `electron42`; upstream's full suite is left to upstream's CI), validates `aur/.SRCINFO` and the metadata of both PKGBUILDs, and builds `aur/PKGBUILD` from the fresh artifact the way AUR users' makepkg does — its payload must match the artifact file for file (paths, modes, links, sha256). A rebuild must still pass the checksum. `smoke` installs the package with its declared dependencies (the pinned `hermes-agent-bin` for `hermes-agent`), loads the node-pty addon with `electron42`, checks that the app reports the package version and boots the app under xvfb on that runtime. `release` and `aur-sync` only run for `main`; `release` writes notes linking the upstream release and the upstream compare view. `aur-sync` injects the released artifact's sha256 into `aur/` and pushes to the AUR only while its commit is still `main`'s HEAD. Upstream tag and commit are pinned in `PKGBUILD` (`_pkgver_tag`, `_commit`).
 - **Copies of this repository** (forks, a private CI test repository): the AUR push only runs in `jabla/hermes-agent-desktop-bin`. Elsewhere `aur-sync` prints the diff it would push, so pipeline changes can be tested end to end without publishing anything.
 - **Packaging-only changes** (patches, launcher, dependencies): bump `pkgrel` in both PKGBUILDs, or the release tag already exists and nothing new is published.
-- **Upstream drift in a patch**: if upstream touches the patched sources, `prepare()` stops (`patch --fuzz=0`). Prefer the refreshed files from `hermes-agent-desktop`; the bump job warns ("Drift from hermes-agent-desktop", also in the bump PR) when its sources, checksums or dependencies differ from `PKGBUILD` — the launcher, its test and the `hermes-agent-bin` optdepends entry are listed as deliberate exceptions in `scripts/bump-pkgbuild.py` — and when its PKGBUILD changes beyond the version fields (build steps, which the `.SRCINFO` comparison cannot see). Review that change in its [AUR history](https://aur.archlinux.org/cgit/aur.git/log/?h=hermes-agent-desktop), port what applies, then set `REFERENCE_PKGBUILD_SHA256` in `scripts/bump-pkgbuild.py` to the value the warning prints. Land the fix *together with* the version bump — a patch written for a release the `PKGBUILD` does not build leaves `main` unbuildable. After editing a local file, run `python3 scripts/bump-pkgbuild.py --sync-sums`.
+- **Upstream drift in a patch**: if upstream touches the patched sources, `prepare()` stops (`patch --fuzz=0`). Prefer the refreshed files from `hermes-agent-desktop`; the bump job warns ("Drift from hermes-agent-desktop", also in the bump PR) when its sources, checksums or dependencies differ from `PKGBUILD` — deliberate exceptions would be listed in `scripts/bump-pkgbuild.py` (none at the moment) — and when its PKGBUILD changes beyond the version fields (build steps, which the `.SRCINFO` comparison cannot see). Review that change in its [AUR history](https://aur.archlinux.org/cgit/aur.git/log/?h=hermes-agent-desktop), port what applies, then set `REFERENCE_PKGBUILD_SHA256` in `scripts/bump-pkgbuild.py` to the value the warning prints. Land the fix *together with* the version bump — a patch written for a release the `PKGBUILD` does not build leaves `main` unbuildable. After editing a local file, run `python3 scripts/bump-pkgbuild.py --sync-sums`.
 - **Electron**: upstream locks an older Electron major than `electron42`, the oldest one still receiving security fixes. `prepare()` fails once upstream requires a newer major than the system runtime.
 - **AUR wrapper**: only `pkgver`/`pkgrel` are bumped there; its `sha256sums` is the release artifact's, computed after the build by `aur-sync` (a local `makepkg` yields a different hash).
 - **AUR key**: keep `AUR_SSH_KEY` as a secret of the `aur` environment, with deployment branches limited to `main` — repository secrets are readable by pull requests from branches of this repository. The same key also publishes `hermes-agent-bin`, and AUR keys can push to every package of the account, so that repository needs the same environment setup.
