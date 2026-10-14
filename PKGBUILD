@@ -2,66 +2,62 @@
 # Kept in sync with the AUR source package hermes-agent-desktop
 # (https://aur.archlinux.org/packages/hermes-agent-desktop): its patches,
 # launcher and regression tests are vendored verbatim, so the prebuilt package
-# behaves exactly like a local build of the source package. The scheduled bump
-# job warns when that package's sources or dependencies drift from these. The
-# packaged app itself is MIT-licensed (Nous Research).
+# behaves exactly like a local build of the source package. The bump job warns
+# when that package's sources or dependencies drift from these. The packaged
+# app itself is MIT-licensed (Nous Research).
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
-_pkgver_tag=v2026.9.24
-_commit=f97608f178d1ffeca59860195ab7da295f7c8e5f
-pkgver=0.21.5
+_pkgver_tag=v0.22.0
+_commit=e06df9c2eae6901f4c88f464e0ae6e753c0428b8
+pkgver=0.22.0
 pkgrel=1
-pkgdesc="Official Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
+pkgdesc="Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
 url='https://github.com/NousResearch/hermes-agent'
 license=('MIT')
+# The app runs its backend through /usr/bin/hermes from hermes-agent (or
+# hermes-agent-bin, which provides it) and never installs a runtime of its
+# own. hermes-agent's own dependencies (ffmpeg, ripgrep, browsers, ...) are not
+# repeated here.
 depends=(
-  'curl' 'electron42' 'git' 'hicolor-icon-theme' 'libnotify' 'libsecret'
-  'nodejs>=22.22' 'npm' 'uv' 'xdg-utils'
+  'electron42'
+  'hermes-agent'
+  'hicolor-icon-theme'
+  'libnotify'
+  'libsecret'
+  'libx11'
+  'libxi'
+  'xdg-utils'
 )
 optdepends=(
-  'hermes-agent-bin: run the app on the installed Hermes runtime instead of a local install'
   'libayatana-appindicator: tray indicator support'
-  'google-chrome: local browser automation (or chromium)'
-  'chromium: local browser automation (or google-chrome)'
-  'ffmpeg: audio and video processing'
-  'ripgrep: fast file content search'
 )
-makedepends=('python')
+makedepends=('npm')
+checkdepends=('nodejs')
 provides=('hermes-agent-desktop')
 conflicts=('hermes-agent-desktop')
 options=('!debug')
 source=(
   "hermes-agent-${_pkgver_tag}.tar.gz::${url}/archive/refs/tags/${_pkgver_tag}.tar.gz"
-  'system-electron-resources.patch'
-  'pin-packaged-runtime.patch'
+  'package-managed-runtime.patch'
+  'package-managed-bootstrap.patch'
   'fix-voice-prefs-storage-spy.patch'
-  'system-browser.patch'
-  'packaged-bootstrap.patch'
-  'runtime-policy.patch'
+  'harden-hud-modifier-monitor.patch'
   'hermes-desktop'
   'launcher.test.cjs'
-  'launcher-runtime-root.test.cjs'
-  'runtime.test.cjs'
-  'runtime-policy.test.py'
 )
 # NOTE: makepkg also validates the local files. The bump automation maintains
 # the tarball sum; after editing a local file run
 # `python3 scripts/bump-pkgbuild.py --sync-sums`, or the build fails at
 # "Validating source files".
-sha256sums=('15b15ce4e6ec8ea424a081823709d1e17f0943e7b42b59597d24ebb94cbd1742'
-            'ee465a1aa2ad5789fa5c7b3a89993bbf0e68efddbf27c93109519b72a4cb90f7'
-            '2bf39d158f144997f6a854dce37ada8c61aea6a038de868183f4e2ae78c35b9e'
-            'a1db30bc6bb6ccef7acb953b958c26e07797f7b0578a62a00d65df81c2bb4dfe'
-            'fa8933a96e58575e7d4f876a7eb380d6c1723233832b787a46fb158f79df7718'
-            '1046a63fdfdade37fac12d2b68c106bafbe30794d6bac44e75ffd5b187305e86'
-            '48191c8d13847d28433938a2e5d7750f61f8616a9aef0c6d5d6abf7e0350db1f'
-            'ac7b80c86ad6e3f2195863e1f2d100f1cce8c98e9b097dc6cf121a636afc7b84'
-            'dcb84ac7c5f5a7168d089ba082a8c8c77cf3955abc79775f530aee870a30d5df'
-            '8ee5ff76ab7afb5ddeade96ed82bcc7e546e17d9e9539e08931084e03ee79c7f'
-            '1a39719fd6b6ac2e773e6f72bd55ef313469734cf72dbe1f9adf7bff0979c873'
-            '9be2b77733674bbfdb1a39ddc902ac9f751f49ce7398675c89190eb0cc6759ea')
+sha256sums=('61333ab64f7ad728bc265d103fd73b2eb4b936f9c8d9fe3ccf2531ad955e96a1'
+            'af06707c57ae08646af03af8f05aee5b94651028b115eaaa18c7ed11ca4edb04'
+            '6a11f2a21bdd3bc6e459072e681641386621b99e90f37005906f0c361fa05886'
+            '047d6e615017b2bb8584383234cdfb3169694e25c10221d7a78da864884b1481'
+            'cf8b625b00e606b5b135bf5a38a851d8a699c819139e6720eecfa043ba886e9b'
+            '8a677666d7d20578a88a745d83b4a75412a55fd5c184fd4f66a50dfe66adb3c6'
+            '202e474fda5fd845f1ba334e503e751f746fb7d1f378fb0d3e8142b4795a025b')
 
 # NOTE: ${srcdir} is empty at the top level of a PKGBUILD — makepkg only sets
 # it inside the function scope of prepare()/build()/package(). Computing the
@@ -84,12 +80,10 @@ prepare() {
   _set_npm_env
   # --fuzz=0: a hunk whose context drifted must fail loudly instead of being
   # applied at a guessed location (offsets are still accepted).
-  patch --batch --fuzz=0 -Np1 -i "${srcdir}/system-electron-resources.patch"
-  patch --batch --fuzz=0 -Np1 -i "${srcdir}/pin-packaged-runtime.patch"
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-runtime.patch"
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-bootstrap.patch"
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/fix-voice-prefs-storage-spy.patch"
-  patch --batch --fuzz=0 -Np1 -i "${srcdir}/system-browser.patch"
-  patch --batch --fuzz=0 -Np1 -i "${srcdir}/packaged-bootstrap.patch"
-  patch --batch --fuzz=0 -Np1 -i "${srcdir}/runtime-policy.patch"
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/harden-hud-modifier-monitor.patch"
   # Keep desktop metadata aligned with the Agent release, not the separately
   # versioned upstream desktop package.json.
   npm pkg set version=${pkgver} --prefix apps/desktop
@@ -142,11 +136,13 @@ build() {
   export npm_config_offline=true
   # makepkg runs build() in a separate subshell from prepare().
   export GITHUB_SHA="${_commit}" GITHUB_REF_NAME="${_pkgver_tag}"
-  local electron_version
-  electron_version="$(< /usr/lib/electron42/version)"
+  # The X11 HUD modifier monitor is compiled with cc during the build; it
+  # takes these flags from the environment (harden-hud-modifier-monitor.patch).
+  export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
   # Keep upstream's package.json and lockfile pins intact for deterministic
-  # npm ci. The builder CLI override below selects the system runtime without
-  # pretending that the locked npm tooling package was resolved at a new pin.
+  # npm ci. electron-builder still prepares a throwaway Electron zip for the
+  # packager; package() keeps only the app resources and the launcher runs
+  # Arch's electron42.
   npm run build
 
   # Upstream writes the wall clock into the bundled install stamp. Normalize it
@@ -158,30 +154,39 @@ build() {
     build/install-stamp.json
   grep -Fq "\"builtAt\": \"${build_time}\"" build/install-stamp.json
 
-  # Upstream's builder wrapper resolves node_modules/electron/dist and passes it
-  # as electronDist. prepare() links that directory to Arch's Electron runtime.
-  # package() keeps only the app resources, so electron42 remains their owner.
-  npm run builder -- --linux dir \
-    -c.electronVersion="${electron_version}"
+  # Upstream's prepared-packaging gate admits `--dir`, not a bare `dir` token,
+  # and rejects `-c.electronVersion=...` overrides. Omit --x64: an explicit
+  # arch flag stages into build/native-deps-<platform>-<arch>, which
+  # productOutput does not allow; the host arch reuses build/native-deps.
+  npm run builder -- --linux --dir
 }
 
 check() {
   cd "$(_extract_dir)"
   _set_npm_env
   export npm_config_offline=true
+  # Hermes desktop tests expect English timestamps and isolated temporary git
+  # repositories; the default Hermes scratch directory sits inside a git repo.
+  export LANG=C.UTF-8 LC_ALL=C.UTF-8
+  export GIT_CEILING_DIRECTORIES="${TMPDIR:-/tmp}"
+  unset HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME
   node "${srcdir}/launcher.test.cjs"
-  node "${srcdir}/launcher-runtime-root.test.cjs"
-  node "${srcdir}/runtime.test.cjs" "$PWD/scripts/install.sh" "$PWD"
-  python -B "${srcdir}/runtime-policy.test.py" "$PWD"
   npm run typecheck --workspace apps/desktop
 
   # Upstream's full vitest suite (~1000 files) runs in upstream's CI; here it
   # took ~90% of the build time and exercised upstream code on Arch's system
   # Node, which the app does not run on. Run the tests that cover what the
   # patches change instead: the patched tests and every test importing a
-  # patched module. The file list follows the patches automatically.
+  # patched module. The file list follows the patches automatically; diff -u
+  # style headers carry a tab and a timestamp after the path.
   local patched=()
-  mapfile -t patched < <(sed -n 's|^+++ b/apps/desktop/||p' "${srcdir}"/*.patch | sort -u)
+  mapfile -t patched < <(sed -n 's|^+++ b/apps/desktop/\([^\t]*\).*|\1|p' "${srcdir}"/*.patch | sort -u)
+  # A misparsed header would select no tests and pass (--passWithNoTests).
+  (( ${#patched[@]} > 0 ))
+  local file
+  for file in "${patched[@]}"; do
+    test -f "apps/desktop/${file}"
+  done
   (cd apps/desktop && npx vitest related --run --passWithNoTests "${patched[@]}")
 
   # node-pty is the only native Node addon shipped by Hermes. Load the staged
@@ -241,11 +246,8 @@ package() {
     "${pkgdir}${libdir}/app.asar.unpacked"
   install -Dm644 "${resources}/install-stamp.json" \
     "${pkgdir}${libdir}/install-stamp.json"
-  # Bootstrap uses the reviewed installer and patch from this exact package,
-  # not an unpatched installer downloaded separately from GitHub.
-  install -Dm644 scripts/install.sh "${pkgdir}${libdir}/runtime/install.sh"
-  install -Dm644 "${srcdir}/runtime-policy.patch" \
-    "${pkgdir}${libdir}/runtime/runtime-policy.patch"
+  # The agent runtime comes from the hermes-agent dependency (/usr/bin/hermes).
+  # This package must not ship or run an installer that writes an agent tree.
   install -Dm755 "${srcdir}/hermes-desktop" "${pkgdir}/usr/bin/${_pkgname}"
   install -Dm644 /dev/stdin "${pkgdir}/usr/share/applications/${_pkgname}.desktop" <<EOF
 [Desktop Entry]

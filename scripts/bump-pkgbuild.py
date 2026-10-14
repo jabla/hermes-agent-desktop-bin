@@ -35,9 +35,9 @@ REFERENCE_SRCINFO = f"https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h={R
 REFERENCE_PKGBUILD = f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={REFERENCE}"
 REFERENCE_LOG = f"https://aur.archlinux.org/cgit/aur.git/log/?h={REFERENCE}"
 # Fingerprint (see reference_fingerprint) of the hermes-agent-desktop PKGBUILD
-# that PKGBUILD was last compared with: hermes-agent-desktop 0.21.3-1. Update
+# that PKGBUILD was last compared with: hermes-agent-desktop 0.21.7-1. Update
 # it after porting a reference change.
-REFERENCE_PKGBUILD_SHA256 = "e32a42c646cb464bc5144c265dbc5ad6a826ee1ab3758afe14fa3bcad117164b"
+REFERENCE_PKGBUILD_SHA256 = "30f5ca6b2f3b6db8d2f00c1aa2d6bceff6446d631cccd85a1ec691079ce4e333"
 SHA_RE = re.compile(r"^sha256sums=\('([0-9a-f]{64})'", re.M)
 # The fields every reference release changes; everything else is packaging.
 VERSION_FIELDS_RE = re.compile(
@@ -217,17 +217,14 @@ def source_sums(info: dict[str, list[str]]) -> dict[str, str]:
     return dict(zip(names, info.get("sha256sums", [])))
 
 
-# Divergences from the AUR source package that are deliberate — see README,
-# "Runtime". The launcher points the app at the runtime installed by
-# hermes-agent(-bin) when one is installed (same filename as the reference,
-# deliberately different content), its own test exists only here, and the
-# optdepends entry documents the choice. Everything else (patches, other
-# sources, checksums, dependencies) must keep matching the reference.
-LOCAL_ONLY_SOURCES = {"launcher-runtime-root.test.cjs"}
-DIVERGENT_CHECKSUMS = {"hermes-desktop"}
-DIVERGENT_OPTDEPENDS = {
-    "hermes-agent-bin: run the app on the installed Hermes runtime instead of a local install"
-}
+# Divergences from the AUR source package that are deliberate. None at the
+# moment: since 0.22.0 the launcher, its test and the dependencies are the
+# reference's own. A future one goes here and into the README. Everything
+# else (patches, other sources, checksums, dependencies) must keep matching
+# the reference.
+LOCAL_ONLY_SOURCES: set[str] = set()
+DIVERGENT_CHECKSUMS: set[str] = set()
+DIVERGENT_OPTDEPENDS: set[str] = set()
 
 
 def reference_fingerprint(text: str) -> str:

@@ -154,19 +154,22 @@ jobs:
       - name: Install dependencies declared in PKGBUILD
         run: |
           # Read them from PKGBUILD itself, so CI installs exactly what
-          # makepkg -s would and cannot drift from a hand-kept list.
+          # makepkg -s would and cannot drift from a hand-kept list. The one
+          # exception is hermes-agent, the app's runtime: it comes from the
+          # AUR (pacman cannot install it here) and is not needed to build.
+          # makepkg therefore runs with --nodeps below.
           cd "$GITHUB_WORKSPACE"
           mapfile -t deps < <(runuser -u builder -- makepkg --printsrcinfo |
-            sed -nE 's/^\t(depends|makedepends|checkdepends) = //p')
+            sed -nE 's/^\t(depends|makedepends|checkdepends) = //p' | grep -vx 'hermes-agent')
           pacman -S --noconfirm --needed "${deps[@]}"
 
       - name: Build package (non-root makepkg, with check())
         run: |
           cd "$GITHUB_WORKSPACE"
           # check() runs the typecheck, the vitest tests covering the patched
-          # files, the packaging regression tests and the node-pty load test
-          # under electron42.
-          runuser -u builder -- makepkg -f --noconfirm
+          # files, the launcher test and the node-pty load test under
+          # electron42.
+          runuser -u builder -- makepkg -f --noconfirm --nodeps
 
       - name: Show result
         run: ls -lh "$GITHUB_WORKSPACE"/*.pkg.tar.zst
@@ -190,7 +193,7 @@ jobs:
           chown -R builder:builder "$work"
           # Twice: a rebuild must still find the download intact. A wrapper
           # whose download is named like its own output overwrites it.
-          runuser -u builder -- sh -c 'cd "$1" && makepkg -f --noconfirm && makepkg -f --noconfirm' sh "$work"
+          runuser -u builder -- sh -c 'cd "$1" && makepkg -f --noconfirm --nodeps && makepkg -f --noconfirm --nodeps' sh "$work"
           # Same files, modes, links and sha256 digests as the artifact;
           # only mtimes and the package metadata differ.
           manifest() {
@@ -221,9 +224,16 @@ jobs:
     timeout-minutes: 20
     container:
       image: archlinux:latest
+    env:
+      # The hermes-agent-bin release the app boots on (it provides
+      # hermes-agent). Pin the one the AUR ships, never one older than the
+      # desktop version: users run the app on that runtime. Change version
+      # and checksum together.
+      RUNTIME_VER: 0.22.0-2
+      RUNTIME_SUM: 85b10a2d21bb5a4091cbc20c2145c846faaf64d1ac945e408b542b0c928daf3c
     steps:
       # Runtime dependencies are deliberately not preinstalled: pacman -U has
-      # to resolve them from the package's own depends=().
+      # to resolve them from the packages' own depends=().
       - name: Install xvfb
         run: pacman -Syu --noconfirm --needed xorg-server-xvfb
 
@@ -232,8 +242,17 @@ jobs:
           name: pkg
           path: pkg
 
-      - name: Install built package (no compile happens here)
-        run: pacman -U --noconfirm pkg/*.pkg.tar.zst
+      # hermes-agent comes from the AUR, so pacman cannot resolve it from the
+      # repositories: the pinned runtime goes into the same transaction.
+      - name: Install the pinned runtime and the built package (no compile happens here)
+        run: |
+          set -euo pipefail
+          runtime_pkg="hermes-agent-bin-${RUNTIME_VER}-x86_64.pkg.tar.zst"
+          curl -fsSL -o "/tmp/${runtime_pkg}" \
+            "https://github.com/jabla/hermes-agent-bin/releases/download/v${RUNTIME_VER}/${runtime_pkg}"
+          echo "${RUNTIME_SUM}  /tmp/${runtime_pkg}" | sha256sum -c -
+          pacman -U --noconfirm "/tmp/${runtime_pkg}" pkg/*.pkg.tar.zst
+          test -x /usr/bin/hermes
 
       - name: Load the installed node-pty addon with electron42
         run: |
@@ -258,16 +277,11 @@ jobs:
           fi
           echo "SMOKE-OK: the packaged app reports version $appver"
 
-      # Two boots. Without a runtime the launcher must leave the upstream
-      # first-run flow alone; with the runtime installed (pinned release of
-      # hermes-agent-bin, the package the launcher points at) the packaged app
-      # must run its backend from /opt/hermes-agent, with the environment the
-      # runtime's /usr/bin/hermes wrapper sets, and must not stop at the
-      # first-run setup screen. The second boot is the regression this package
-      # exists to prevent: the app insists on a policy-patched checkout in
-      # $HERMES_HOME/hermes-agent ('package-patch-missing') and would otherwise
-      # install a second runtime next to the installed one.
-      - name: Boot smoke tests under xvfb
+      # The launcher points the app at the runtime's /usr/bin/hermes. The app
+      # must start its backend through that wrapper (so with the wrapper's
+      # environment), must not stop at the first-run setup screen and must
+      # never write an agent tree of its own.
+      - name: Boot smoke test under xvfb
         run: |
           mkdir -p "$HOME/.config"
           printf '%s\n' '--no-sandbox' > "$HOME/.config/hermes-desktop-flags.conf"
@@ -280,84 +294,31 @@ jobs:
           fi
 
           # stdout/stderr only carry the launcher's and Electron's output and
-          # the install stamp; the app's boot decisions ([boot] ..., backend
-          # readiness) go to the desktop log. Each boot NAME starts with a fresh one and leaves
-          # /tmp/hermes-boot-NAME.log (stdout) and /tmp/hermes-desktop-NAME.log.
+          # the install stamp; the app's boot decisions and the backend
+          # readiness go to the desktop log.
           desktop_log="$HOME/.hermes/logs/desktop.log"
-
-          # Still running is not enough: Electron keeps a window open after a
-          # main-process exception, and a missing install stamp still boots.
-          boot() {
-            rm -f "$desktop_log"
-            set +e
-            timeout 90 xvfb-run -a -s '-screen 0 1280x1024x24' \
-              hermes-desktop > "/tmp/hermes-boot-$1.log" 2>&1
-            rc=$?
-            set -e
-            cp "$desktop_log" "/tmp/hermes-desktop-$1.log" 2>/dev/null || : > "/tmp/hermes-desktop-$1.log"
-            if [ "$rc" -ne 124 ]; then
-              echo "SMOKE-FAIL: $1: exited with rc=$rc"
-              return 1
-            fi
-            if grep -qE 'App threw an error during load|A JavaScript error occurred in the main process|Uncaught Exception' "/tmp/hermes-boot-$1.log"; then
-              echo "SMOKE-FAIL: $1: main process error while booting"
-              return 1
-            fi
-            if ! grep -qF "[hermes] install stamp: ${stamp}" "/tmp/hermes-boot-$1.log"; then
-              echo "SMOKE-FAIL: $1: packaged install stamp ${stamp} was not loaded"
-              return 1
-            fi
-          }
           fail() {
-            echo "--- stdout ($1) ---"
-            tail -n 40 "/tmp/hermes-boot-$1.log"
-            echo "--- desktop.log ($1) ---"
-            tail -n 40 "/tmp/hermes-desktop-$1.log"
+            echo "--- stdout ---"
+            tail -n 40 /tmp/hermes-boot.log
+            echo "--- desktop.log ---"
+            tail -n 40 /tmp/hermes-desktop.log
             exit 1
           }
-          expect_logged() {
-            if ! grep -qF "$2" "/tmp/hermes-desktop-$1.log"; then
-              echo "SMOKE-FAIL: $1: desktop.log lacks: $2"
-              fail "$1"
-            fi
-          }
 
-          # 1) No runtime installed: upstream first-run flow, no runtime root.
-          boot noruntime || fail noruntime
-          expect_logged noruntime '[boot] Waiting for first-run setup choice'
-          if grep -qF 'Using Hermes source at' /tmp/hermes-desktop-noruntime.log; then
-            echo "SMOKE-FAIL: the launcher pointed the app at a runtime although none is installed"
-            fail noruntime
-          fi
-          echo "SMOKE-OK: no runtime installed, upstream first-run flow reached"
-
-          # 2) Runtime installed: the app must run its backend from
-          #    /opt/hermes-agent. Pin the hermes-agent-bin release the AUR
-          #    ships, never one older than the desktop version: users run the
-          #    app on that runtime, and the assertion needs a runtime whose
-          #    `serve` mode the app supports. Change version and checksum
-          #    together.
-          runtime_ver=0.21.6-1
-          runtime_sum=ec27f404b377abeedc164fa00e39aa004efe4ff5c4e11e4f9451bc6f8d2cab9a
-          runtime_pkg="hermes-agent-bin-${runtime_ver}-x86_64.pkg.tar.zst"
-          curl -fsSL -o "/tmp/${runtime_pkg}" \
-            "https://github.com/jabla/hermes-agent-bin/releases/download/v${runtime_ver}/${runtime_pkg}"
-          echo "${runtime_sum}  /tmp/${runtime_pkg}" | sha256sum -c -
-          pacman -U --noconfirm "/tmp/${runtime_pkg}"
-          test -x /opt/hermes-agent/venv/bin/python
-
-          # The app starts the runtime's python directly, not /usr/bin/hermes,
-          # so the launcher has to hand the backend that wrapper's environment.
           # Record the running backend's environment (this shell has no
           # HERMES_* variables of its own) and compare it after the boot.
+          # The backend runs `python -m hermes_cli.main [--profile P] serve`.
           backend_pid() {
-            local proc args
+            local proc args arg
             for proc in /proc/[0-9]*; do
               mapfile -d '' -t args < "$proc/cmdline" 2>/dev/null || continue
-              if [ "${args[1]:-}" = -m ] && [ "${args[2]:-}" = hermes_cli.main ] && [ "${args[3]:-}" = serve ]; then
-                echo "${proc#/proc/}"
-                return 0
-              fi
+              [ "${args[1]:-}" = -m ] && [ "${args[2]:-}" = hermes_cli.main ] || continue
+              for arg in "${args[@]:3}"; do
+                if [ "$arg" = serve ]; then
+                  echo "${proc#/proc/}"
+                  return 0
+                fi
+              done
             done
             return 1
           }
@@ -372,26 +333,55 @@ jobs:
           ) &
           env_watch=$!
 
-          boot runtime || fail runtime
+          # Still running is not enough: Electron keeps a window open after a
+          # main-process exception. A missing install stamp does not stop the
+          # boot either.
+          set +e
+          timeout 90 xvfb-run -a -s '-screen 0 1280x1024x24' \
+            hermes-desktop > /tmp/hermes-boot.log 2>&1
+          rc=$?
+          set -e
           wait "$env_watch" || true
-          expect_logged runtime '[boot] Using Hermes source at /opt/hermes-agent'
-          expect_logged runtime 'Hermes backend is ready. Finalizing desktop startup'
-          if grep -qE 'Waiting for first-run setup choice|package-patch-missing' /tmp/hermes-desktop-runtime.log; then
-            echo "SMOKE-FAIL: app stopped at the first-run setup screen although a runtime is installed"
-            fail runtime
+          cp "$desktop_log" /tmp/hermes-desktop.log 2>/dev/null || : > /tmp/hermes-desktop.log
+          if [ "$rc" -ne 124 ]; then
+            echo "SMOKE-FAIL: exited with rc=$rc"
+            fail
+          fi
+          if grep -qE 'App threw an error during load|A JavaScript error occurred in the main process|Uncaught Exception' /tmp/hermes-boot.log; then
+            echo "SMOKE-FAIL: main process error while booting"
+            fail
+          fi
+          if ! grep -qF "[hermes] install stamp: ${stamp}" /tmp/hermes-boot.log; then
+            echo "SMOKE-FAIL: packaged install stamp ${stamp} was not loaded"
+            fail
+          fi
+          for line in 'via existing Hermes CLI at /usr/bin/hermes' \
+                      'Hermes backend is ready. Finalizing desktop startup'; do
+            if ! grep -qF "$line" /tmp/hermes-desktop.log; then
+              echo "SMOKE-FAIL: desktop.log lacks: $line"
+              fail
+            fi
+          done
+          if grep -qE 'Waiting for first-run setup choice|first-launch bootstrap|REFUSING installer' /tmp/hermes-desktop.log; then
+            echo "SMOKE-FAIL: the app went for the first-run setup although the runtime is installed"
+            fail
+          fi
+          if [ -e "$HOME/.hermes/hermes-agent" ]; then
+            echo "SMOKE-FAIL: the app wrote an agent tree to ~/.hermes/hermes-agent"
+            fail
           fi
           wrapper_vars=$(sed -nE 's/^export ([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' /usr/bin/hermes)
           if [ -z "$wrapper_vars" ] || [ ! -s /tmp/hermes-backend.env ]; then
-            echo "SMOKE-FAIL: runtime: no backend environment recorded, or no exports in /usr/bin/hermes to compare"
-            fail runtime
+            echo "SMOKE-FAIL: no backend environment recorded, or no exports in /usr/bin/hermes to compare"
+            fail
           fi
           for var in $wrapper_vars; do
             if ! grep -q "^${var}=" /tmp/hermes-backend.env; then
-              echo "SMOKE-FAIL: runtime: the backend lacks ${var}, which /usr/bin/hermes sets"
-              fail runtime
+              echo "SMOKE-FAIL: the backend lacks ${var}, which /usr/bin/hermes sets"
+              fail
             fi
           done
-          echo "SMOKE-OK: app booted on the installed package runtime with the environment of /usr/bin/hermes:" $wrapper_vars
+          echo "SMOKE-OK: app booted through /usr/bin/hermes with its environment:" $wrapper_vars
 
   # ---------------------------------------------------------------------------
   # Release + AUR sync: only after a merge to main or a manual dispatch ON main
