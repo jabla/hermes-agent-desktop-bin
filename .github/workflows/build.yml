@@ -149,13 +149,19 @@ jobs:
           set -euo pipefail
           build() { echo "$1: building"; echo run= >> "$GITHUB_OUTPUT"; exit 0; }
           repo=$GITHUB_REPOSITORY
-          pr=$(gh api "repos/$repo/commits/$GITHUB_SHA/pulls" | python3 -c '
+          # GitHub links a merge commit to its pull request a few seconds after
+          # the push: a lookup right away can come back empty.
+          for attempt in 1 2 3 4; do
+            pr=$(gh api "repos/$repo/commits/$GITHUB_SHA/pulls" | python3 -c '
           import json, os, sys
           for p in json.load(sys.stdin):
               if (p.get("merged_at") and p["base"]["ref"] == "main"
                       and (p["head"]["repo"] or {}).get("full_name") == os.environ["GITHUB_REPOSITORY"]):
                   print(p["number"], p["head"]["sha"])
                   break') || build "pull request lookup failed"
+            [ -n "$pr" ] || [ "$attempt" -eq 4 ] || sleep 15
+            [ -z "$pr" ] || break
+          done
           [ -n "$pr" ] || build "no merged pull request from $repo"
           read -r number head <<<"$pr"
           # Auto-merge fires when smoke passes; the run itself may finish a
@@ -213,7 +219,7 @@ jobs:
           # makepkg therefore runs with --nodeps below.
           cd "$GITHUB_WORKSPACE"
           mapfile -t deps < <(runuser -u builder -- makepkg --printsrcinfo |
-            sed -nE 's/^\t(depends|makedepends|checkdepends) = //p' | grep -vx 'hermes-agent')
+            sed -nE 's/^\t(depends|makedepends|checkdepends) = //p' | grep -vE '^hermes-agent([<>=].*)?$')
           pacman -S --noconfirm --needed "${deps[@]}"
 
       - name: Build package (non-root makepkg, with check())
@@ -303,8 +309,8 @@ jobs:
       # hermes-agent). Pin the one the AUR ships, never one older than the
       # desktop version: users run the app on that runtime. Change version
       # and checksum together.
-      RUNTIME_VER: 0.22.0-3
-      RUNTIME_SUM: 1d144ea3760977881f67e67a5e9a3486e16f5780f5b4371c87859c4d208dbdf2
+      RUNTIME_VER: 0.22.2-1
+      RUNTIME_SUM: 49b66a8b5a9ebfd5cc089be46c434a73bc97d04f90e0be8aa956a58540ba004d
     steps:
       # Runtime dependencies are deliberately not preinstalled: pacman -U has
       # to resolve them from the packages' own depends=().
@@ -355,7 +361,8 @@ jobs:
       # must start its backend through that wrapper (so with the wrapper's
       # environment), must not stop at the first-run setup screen and must
       # never write an agent tree of its own. Its UI must come up: the
-      # renderer logs the local connection it picked.
+      # renderer logs the local connection it picked. The window must be
+      # styled.
       - name: Boot smoke test under xvfb
         run: |
           mkdir -p "$HOME/.config"
@@ -415,9 +422,38 @@ jobs:
           # window open after a main-process exception. A missing install
           # stamp does not stop the boot either.
           ui='[gateway-route win=main] published connection=local'
+
+          # Styled: elements with Tailwind's flex class are flex boxes. A
+          # renderer built without the utilities shows bare text, a UI that
+          # never mounted has no such elements. Asked over the DevTools port
+          # with the package's own electron42 as Node.
+          cat > /tmp/ui-styled.mjs <<'EOF'
+          const port = process.argv[2]
+          const page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json())
+            .find(t => t.type === 'page' && t.url.includes('/index.html'))
+          if (!page) {
+            console.log('no app window on the DevTools port')
+            process.exit(1)
+          }
+          const ws = new WebSocket(page.webSocketDebuggerUrl)
+          await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject })
+          ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { returnByValue: true, expression: `(() => {
+            const els = [...document.querySelectorAll('.flex')]
+            return [els.length, els.filter(e => getComputedStyle(e).display === 'flex').length]
+          })()` } }))
+          const reply = await new Promise(resolve => {
+            ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id === 1) resolve(m) }
+          })
+          const [all, flex] = reply.result?.result?.value ?? [0, 0]
+          console.log(`${flex} of ${all} elements with the flex class are flex boxes`)
+          process.exit(all > 0 && flex > 0 ? 0 : 1)
+          EOF
+          styled='UI never came up'
+          styled_rc=1
+
           started=$SECONDS
           timeout -k 10 120 xvfb-run -a -s '-screen 0 1280x1024x24' \
-            hermes-desktop > /tmp/hermes-boot.log 2>&1 &
+            hermes-desktop --remote-debugging-port=9339 > /tmp/hermes-boot.log 2>&1 &
           app=$!
           for _ in $(seq 90); do
             if grep -qF "$ui" "$desktop_log" 2>/dev/null || ! kill -0 "$app" 2>/dev/null; then
@@ -428,6 +464,9 @@ jobs:
           if grep -qF "$ui" "$desktop_log" 2>/dev/null; then
             echo "UI up after $((SECONDS - started)) s"
             sleep 15
+            styled_rc=0
+            styled=$(ELECTRON_RUN_AS_NODE=1 timeout 30 /usr/lib/electron42/electron /tmp/ui-styled.mjs 9339 2>&1) ||
+              styled_rc=$?
           fi
           running=false
           if kill -0 "$app" 2>/dev/null; then
@@ -460,6 +499,10 @@ jobs:
               fail
             fi
           done
+          if [ "$styled_rc" -ne 0 ]; then
+            echo "SMOKE-FAIL: the window is not styled: $styled"
+            fail
+          fi
           if grep -qE 'Waiting for first-run setup choice|first-launch bootstrap|REFUSING installer' /tmp/hermes-desktop.log; then
             echo "SMOKE-FAIL: the app went for the first-run setup although the runtime is installed"
             fail
@@ -480,6 +523,7 @@ jobs:
             fi
           done
           echo "SMOKE-OK: app and UI booted through /usr/bin/hermes with its environment:" $wrapper_vars
+          echo "SMOKE-OK: window styled ($styled)"
 
   # ---------------------------------------------------------------------------
   # Release + AUR sync: only after a merge to main or a manual dispatch ON main

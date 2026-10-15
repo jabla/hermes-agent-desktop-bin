@@ -35,9 +35,9 @@ REFERENCE_SRCINFO = f"https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h={R
 REFERENCE_PKGBUILD = f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={REFERENCE}"
 REFERENCE_LOG = f"https://aur.archlinux.org/cgit/aur.git/log/?h={REFERENCE}"
 # Fingerprint (see reference_fingerprint) of the hermes-agent-desktop PKGBUILD
-# that PKGBUILD was last compared with: hermes-agent-desktop 0.21.7-1. Update
+# that PKGBUILD was last compared with: hermes-agent-desktop 0.22.1-1. Update
 # it after porting a reference change.
-REFERENCE_PKGBUILD_SHA256 = "30f5ca6b2f3b6db8d2f00c1aa2d6bceff6446d631cccd85a1ec691079ce4e333"
+REFERENCE_PKGBUILD_SHA256 = "dd4a712f7bc0e71d70485f57f94cd7727d8e8c768f02908271a6c40d19025ac9"
 SHA_RE = re.compile(r"^sha256sums=\('([0-9a-f]{64})'", re.M)
 # The fields every reference release changes; everything else is packaging.
 VERSION_FIELDS_RE = re.compile(
@@ -217,18 +217,28 @@ def source_sums(info: dict[str, list[str]]) -> dict[str, str]:
     return dict(zip(names, info.get("sha256sums", [])))
 
 
-# Divergences from the AUR source package that are deliberate. None at the
-# moment: since 0.22.0 the launcher, its test and the dependencies are the
-# reference's own. A future one goes here and into the README. Everything
-# else (patches, other sources, checksums, dependencies) must keep matching
-# the reference.
-LOCAL_ONLY_SOURCES: set[str] = set()
+# Divergences from the AUR source package that are deliberate, also listed in
+# the README. harden-hud-modifier-monitor.patch builds the X11 HUD helper with
+# Arch's CFLAGS/LDFLAGS (full RELRO); the reference dropped it in 0.22.0-1.
+# Everything else (patches, other sources, checksums, dependencies) must keep
+# matching the reference.
+LOCAL_ONLY_SOURCES: set[str] = {"harden-hud-modifier-monitor.patch"}
 DIVERGENT_CHECKSUMS: set[str] = set()
 DIVERGENT_OPTDEPENDS: set[str] = set()
 
 
+def runtime_dep(dep: str, pkgver: str) -> str:
+    """hermes-agent>=<own pkgver> as one value, whichever version it names:
+    both packages need a runtime of at least their own version."""
+    return "hermes-agent>=${pkgver}" if dep == f"hermes-agent>={pkgver}" else dep
+
+
 def reference_fingerprint(text: str) -> str:
     """sha256 of a PKGBUILD without the fields every release changes."""
+    m = re.search(r"(?m)^pkgver=(\S+)$", text)
+    if m:
+        # The reference writes its runtime dependency with the version itself.
+        text = text.replace(f"'hermes-agent>={m.group(1)}'", "'hermes-agent>=${pkgver}'")
     return hashlib.sha256(VERSION_FIELDS_RE.sub("", text).encode()).hexdigest()
 
 
@@ -271,8 +281,10 @@ def check_reference_drift() -> list[str]:
         return []
     ours = parse_srcinfo(printsrcinfo("."))
     drift = reference_pkgbuild_drift()
+    our_ver, ref_ver = ours.get("pkgver", ["?"])[0], ref.get("pkgver", ["?"])[0]
     for key in ("depends", "optdepends"):
-        here, there = set(ours.get(key, [])), set(ref.get(key, []))
+        here = {runtime_dep(d, our_ver) for d in ours.get(key, [])}
+        there = {runtime_dep(d, ref_ver) for d in ref.get(key, [])}
         if key == "optdepends":
             here -= DIVERGENT_OPTDEPENDS
         if here != there:
@@ -285,7 +297,6 @@ def check_reference_drift() -> list[str]:
         drift.append(f"source files: only here {sorted(here - there)}, "
                      f"only in {REFERENCE} {sorted(there - here)}")
     our_sums, ref_sums = source_sums(ours), source_sums(ref)
-    our_ver, ref_ver = ours.get("pkgver", ["?"])[0], ref.get("pkgver", ["?"])[0]
     if our_ver == ref_ver:
         for name in sorted(our_sums.keys() & ref_sums.keys()):
             if name in DIVERGENT_CHECKSUMS or name in LOCAL_ONLY_SOURCES:

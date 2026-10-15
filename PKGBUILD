@@ -8,21 +8,22 @@
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
-_pkgver_tag=v0.22.0
-_commit=e06df9c2eae6901f4c88f464e0ae6e753c0428b8
-pkgver=0.22.0
+_pkgver_tag=v0.22.2
+_commit=d923a5eb487a17c0a68801bba9ef0f56c81040a8
+pkgver=0.22.2
 pkgrel=1
 pkgdesc="Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
 url='https://github.com/NousResearch/hermes-agent'
 license=('MIT')
 # The app runs its backend through /usr/bin/hermes from hermes-agent (or
-# hermes-agent-bin, which provides it) and never installs a runtime of its
-# own. hermes-agent's own dependencies (ffmpeg, ripgrep, browsers, ...) are not
-# repeated here.
+# hermes-agent-bin, which provides it with its version) and never installs a
+# runtime of its own. Like hermes-agent-desktop it needs a runtime of at least
+# its own version. hermes-agent's own dependencies (ffmpeg, ripgrep, browsers,
+# ...) are not repeated here.
 depends=(
   'electron42'
-  'hermes-agent'
+  "hermes-agent>=${pkgver}"
   'hicolor-icon-theme'
   'libnotify'
   'libsecret'
@@ -42,7 +43,6 @@ source=(
   "hermes-agent-${_pkgver_tag}.tar.gz::${url}/archive/refs/tags/${_pkgver_tag}.tar.gz"
   'package-managed-runtime.patch'
   'package-managed-bootstrap.patch'
-  'fix-voice-prefs-storage-spy.patch'
   'harden-hud-modifier-monitor.patch'
   'hermes-desktop'
   'launcher.test.cjs'
@@ -51,10 +51,9 @@ source=(
 # the tarball sum; after editing a local file run
 # `python3 scripts/bump-pkgbuild.py --sync-sums`, or the build fails at
 # "Validating source files".
-sha256sums=('61333ab64f7ad728bc265d103fd73b2eb4b936f9c8d9fe3ccf2531ad955e96a1'
-            'af06707c57ae08646af03af8f05aee5b94651028b115eaaa18c7ed11ca4edb04'
-            '6a11f2a21bdd3bc6e459072e681641386621b99e90f37005906f0c361fa05886'
-            '047d6e615017b2bb8584383234cdfb3169694e25c10221d7a78da864884b1481'
+sha256sums=('77d2c763a3bd5133bfb3e327986c987dba249e14988b92919ef726d389c6b9d2'
+            'a3dea6008026ed038e8617b3e5e72333d9b35b2d9ac5fe3a7f60b7ddac8f7458'
+            '412ad7b2b6bc5149a8d236ad2cb9be54d2ac0ab78dbd3c8e16deb4f4e683713f'
             'cf8b625b00e606b5b135bf5a38a851d8a699c819139e6720eecfa043ba886e9b'
             '8a677666d7d20578a88a745d83b4a75412a55fd5c184fd4f66a50dfe66adb3c6'
             '202e474fda5fd845f1ba334e503e751f746fb7d1f378fb0d3e8142b4795a025b')
@@ -82,7 +81,6 @@ prepare() {
   # applied at a guessed location (offsets are still accepted).
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-runtime.patch"
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-bootstrap.patch"
-  patch --batch --fuzz=0 -Np1 -i "${srcdir}/fix-voice-prefs-storage-spy.patch"
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/harden-hud-modifier-monitor.patch"
   # Keep desktop metadata aligned with the Agent release, not the separately
   # versioned upstream desktop package.json.
@@ -188,6 +186,17 @@ check() {
     test -f "apps/desktop/${file}"
   done
   (cd apps/desktop && npx vitest related --run --passWithNoTests "${patched[@]}")
+
+  # Tailwind v4 skips sources that a parent directory's .gitignore excludes
+  # when the build directory is no git checkout (this repository ignores
+  # src/). The renderer then ships without its utility classes: the window
+  # shows unstyled text while the app itself boots fine.
+  local css=(apps/desktop/release/linux-unpacked/resources/app.asar.unpacked/dist/assets/index-*.css)
+  if ! grep -q '\.flex{' "${css[@]}"; then
+    printf 'ERROR: the renderer CSS lacks Tailwind utilities (%s) — build from a git checkout or without a parent .gitignore excluding src/\n' \
+      "${css[*]##*/}"
+    return 1
+  fi
 
   # node-pty is the only native Node addon shipped by Hermes. Load the staged
   # module with the exact Electron runtime used by the installed launcher; its
