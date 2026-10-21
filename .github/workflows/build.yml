@@ -357,21 +357,52 @@ jobs:
           fi
           echo "SMOKE-OK: the packaged app reports version $appver"
 
-      # The launcher points the app at the runtime's /usr/bin/hermes. The app
-      # must start its backend through that wrapper (so with the wrapper's
-      # environment), must not stop at the first-run setup screen and must
-      # never write an agent tree of its own. Its UI must come up: the
-      # renderer logs the local connection it picked. The window must be
-      # styled.
+      # With a group-writable profile home (or on Windows) the app mints its
+      # gateway tickets through the runtime's own interpreter: it reads the
+      # install root from `hermes --version` and asks the launcher for the
+      # interpreter (--print-runtime-command), then imports the ticket client
+      # with it. A runtime without that answer leaves every API call failing
+      # there; the boot below uses the default, private home.
+      - name: The runtime names its interpreter for gateway tickets
+        run: |
+          set -euo pipefail
+          root=$(/usr/bin/hermes --version 2>/dev/null | sed -n 's/^Install directory: //p')
+          if [ -z "$root" ] || [ ! -d "$root" ]; then
+            echo "SMOKE-FAIL: hermes --version names no install directory ('$root')"
+            exit 1
+          fi
+          if ! runtime=$(cd "$root" && /usr/bin/hermes --print-runtime-command 2> /tmp/runtime.err); then
+            echo "SMOKE-FAIL: /usr/bin/hermes --print-runtime-command failed:"
+            cat /tmp/runtime.err
+            exit 1
+          fi
+          python=$(python3 -c 'import json, sys; c = json.loads(sys.argv[1]); print(c[0] if isinstance(c, list) and c else "")' "$runtime") || python=
+          if [[ "$python" != /* ]] || [ ! -f "$python" ]; then
+            echo "SMOKE-FAIL: hermes --print-runtime-command names no interpreter: $runtime"
+            exit 1
+          fi
+          # The app's ticket helper runs `<python> -P -u -c ...` with the
+          # install root on PYTHONPATH and imports these first.
+          if ! PYTHONPATH="$root" "$python" -P -c \
+              'from hermes_cli.gateway_client import _session_ticket; from hermes_cli.gateway_runtime_discovery import DiscoveryError, _private_node' \
+              2> /tmp/ticket-import.err; then
+            echo "SMOKE-FAIL: $python cannot import the gateway ticket client:"
+            tail -n 20 /tmp/ticket-import.err
+            exit 1
+          fi
+          echo "SMOKE-OK: /usr/bin/hermes names $python for gateway tickets (install root $root)"
+
+      # The launcher points the app at the runtime's /usr/bin/hermes. Since
+      # 0.22.4 the app runs `hermes gateway ensure` through it and attaches
+      # to that gateway, which must carry the wrapper's environment. The app
+      # must not stop at the first-run setup screen and must never write an
+      # agent tree of its own. Its UI must come up: the renderer logs the
+      # local connection it picked. The window must be styled and an API
+      # call with a gateway ticket must succeed.
       - name: Boot smoke test under xvfb
         run: |
           mkdir -p "$HOME/.config"
           printf '%s\n' '--no-sandbox' > "$HOME/.config/hermes-desktop-flags.conf"
-          # A group-writable home (umask 002) makes the app mint its gateway
-          # tickets through the interpreter `hermes --print-runtime-command`
-          # names, the path that depends on hermes-agent-bin's launcher. A
-          # private home mints them in the app itself.
-          install -d -m 770 "$HOME/.hermes"
 
           stamp=$(grep -oE '"commit": *"[0-9a-f]{12}' /usr/lib/hermes-agent-desktop/install-stamp.json |
             grep -oE '[0-9a-f]{12}$' || true)
@@ -381,39 +412,44 @@ jobs:
           fi
 
           # stdout/stderr only carry the launcher's and Electron's output and
-          # the install stamp; the app's boot decisions and the backend
-          # readiness go to the desktop log.
+          # the install stamp; the app's boot decisions go to the desktop log,
+          # the detached gateway writes its own logs.
           desktop_log="$HOME/.hermes/logs/desktop.log"
           fail() {
+            local log
             echo "--- stdout ---"
             tail -n 40 /tmp/hermes-boot.log
             echo "--- desktop.log ---"
             tail -n 40 /tmp/hermes-desktop.log
+            for log in gateway-stdio.log gateway.log; do
+              if [ -s "$HOME/.hermes/logs/$log" ]; then
+                echo "--- $log ---"
+                tail -n 30 "$HOME/.hermes/logs/$log"
+              fi
+            done
             exit 1
           }
 
-          # Record the running backend's environment (this shell has no
-          # HERMES_* variables of its own) and compare it after the boot.
-          # Since 0.22.4 the app attaches to the gateway that
-          # `hermes gateway ensure` starts (no gateway service here):
-          # `python -m hermes_cli.main [selector] gateway run ...`, with the
+          # Record the gateway's environment (this shell has no HERMES_*
+          # variables of its own) and compare it after the boot. With no
+          # gateway service installed, `hermes gateway ensure` starts
+          # `python -m hermes_cli.main [selector] gateway run ...` with the
           # environment of the ensure call through /usr/bin/hermes.
           backend_pid() {
-            local proc args i
+            local proc args
             for proc in /proc/[0-9]*; do
               mapfile -d '' -t args < "$proc/cmdline" 2>/dev/null || continue
               [ "${args[1]:-}" = -m ] && [ "${args[2]:-}" = hermes_cli.main ] || continue
-              for ((i = 3; i < ${#args[@]} - 1; i++)); do
-                if [ "${args[i]}" = gateway ] && [ "${args[i + 1]}" = run ]; then
-                  echo "${proc#/proc/}"
-                  return 0
-                fi
-              done
+              if [[ " ${args[*]:3} " == *" gateway run "* ]]; then
+                echo "${proc#/proc/}"
+                return 0
+              fi
             done
             return 1
           }
+          # As long as the UI wait below, with a margin.
           (
-            for _ in $(seq 80); do
+            for _ in $(seq 100); do
               if pid=$(backend_pid) && tr '\0' '\n' < "/proc/${pid}/environ" > /tmp/hermes-backend.env; then
                 exit 0
               fi
@@ -426,16 +462,20 @@ jobs:
           # The app must still run 15 s after its UI reported the local
           # connection (or after 90 s without that line); then it is stopped.
           # timeout runs it in a process group of its own and passes the stop
-          # on to all of it. Still running is not enough: Electron keeps a
-          # window open after a main-process exception. A missing install
-          # stamp does not stop the boot either.
+          # on to all of it; the gateway runs in a session of its own and
+          # outlives the app until the container ends. Still running is not
+          # enough: Electron keeps a window open after a main-process
+          # exception. A missing install stamp does not stop the boot either.
           ui='[gateway-route win=main] published connection=local'
 
-          # Styled: elements with Tailwind's flex class are flex boxes. A
-          # renderer built without the utilities shows bare text, a UI that
-          # never mounted has no such elements. Asked over the DevTools port
-          # with the package's own electron42 as Node.
-          cat > /tmp/ui-styled.mjs <<'EOF'
+          # Asked over the DevTools port with the package's own electron42 as
+          # Node. Styled: elements with Tailwind's flex class are flex boxes.
+          # A renderer built without the utilities shows bare text, a UI that
+          # never mounted has no such elements. API: the renderer's own
+          # bridge requests /api/status, which needs a gateway ticket. A
+          # failure is retried for a few seconds (a gateway that is still
+          # settling), then reported.
+          cat > /tmp/ui-probe.mjs <<'EOF'
           const port = process.argv[2]
           const page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json())
             .find(t => t.type === 'page' && t.url.includes('/index.html'))
@@ -445,19 +485,30 @@ jobs:
           }
           const ws = new WebSocket(page.webSocketDebuggerUrl)
           await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject })
-          ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { returnByValue: true, expression: `(() => {
+          let next = 0
+          const evaluate = expression => new Promise(resolve => {
+            const id = ++next
+            ws.addEventListener('message', ev => { const m = JSON.parse(ev.data); if (m.id === id) resolve(m.result?.result?.value) })
+            ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { returnByValue: true, awaitPromise: true, expression } }))
+          })
+          const [all, flex] = await evaluate(`(() => {
             const els = [...document.querySelectorAll('.flex')]
             return [els.length, els.filter(e => getComputedStyle(e).display === 'flex').length]
-          })()` } }))
-          const reply = await new Promise(resolve => {
-            ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id === 1) resolve(m) }
-          })
-          const [all, flex] = reply.result?.result?.value ?? [0, 0]
+          })()`) ?? [0, 0]
           console.log(`${flex} of ${all} elements with the flex class are flex boxes`)
-          process.exit(all > 0 && flex > 0 ? 0 : 1)
+          let api
+          for (let attempt = 1; attempt <= 5; attempt++) {
+            api = await evaluate(`window.hermesDesktop.api({ path: '/api/status' }).then(
+              r => ({ ok: true, keys: Object.keys(r ?? {}).length }),
+              e => ({ ok: false, error: String(e?.message ?? e) }))`) ?? { ok: false, error: 'no reply' }
+            if (api.ok) break
+            await new Promise(resolve => setTimeout(resolve, 2000))
+          }
+          console.log(api.ok ? `GET /api/status answered (${api.keys} fields)` : `GET /api/status failed: ${api.error}`)
+          process.exit(all > 0 && flex > 0 && api.ok ? 0 : 1)
           EOF
-          styled='UI never came up'
-          styled_rc=1
+          probe='UI never came up'
+          probe_rc=1
 
           started=$SECONDS
           timeout -k 10 120 xvfb-run -a -s '-screen 0 1280x1024x24' \
@@ -472,9 +523,9 @@ jobs:
           if grep -qF "$ui" "$desktop_log" 2>/dev/null; then
             echo "UI up after $((SECONDS - started)) s"
             sleep 15
-            styled_rc=0
-            styled=$(ELECTRON_RUN_AS_NODE=1 timeout 30 /usr/lib/electron42/electron /tmp/ui-styled.mjs 9339 2>&1) ||
-              styled_rc=$?
+            probe_rc=0
+            probe=$(ELECTRON_RUN_AS_NODE=1 timeout 40 /usr/lib/electron42/electron /tmp/ui-probe.mjs 9339 2>&1) ||
+              probe_rc=$?
           fi
           running=false
           if kill -0 "$app" 2>/dev/null; then
@@ -483,7 +534,7 @@ jobs:
           fi
           rc=0
           wait "$app" || rc=$?
-          # A backend that has not started by now never will.
+          # A gateway that has not started by now never will.
           kill "$env_watch" 2>/dev/null || true
           wait "$env_watch" || true
           cp "$desktop_log" /tmp/hermes-desktop.log 2>/dev/null || : > /tmp/hermes-desktop.log
@@ -507,16 +558,8 @@ jobs:
               fail
             fi
           done
-          # Every API call needs a gateway ticket, minted with the
-          # interpreter `hermes --print-runtime-command` names. A failed one
-          # leaves the window up with an empty shell.
-          if grep -qE 'Gateway ticket|\[hermes:api [A-Z]+ [^]]*\] Error' /tmp/hermes-desktop.log; then
-            echo "SMOKE-FAIL: gateway ticket or API errors:"
-            grep -m5 -E 'Gateway ticket|\[hermes:api [A-Z]+ [^]]*\] Error' /tmp/hermes-desktop.log
-            fail
-          fi
-          if [ "$styled_rc" -ne 0 ]; then
-            echo "SMOKE-FAIL: the window is not styled: $styled"
+          if [ "$probe_rc" -ne 0 ]; then
+            echo "SMOKE-FAIL: the window is not styled or its API call failed: $probe"
             fail
           fi
           if grep -qE 'Waiting for first-run setup choice|first-launch bootstrap|REFUSING installer' /tmp/hermes-desktop.log; then
@@ -528,18 +571,22 @@ jobs:
             fail
           fi
           wrapper_vars=$(sed -nE 's/^export ([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' /usr/bin/hermes)
-          if [ -z "$wrapper_vars" ] || [ ! -s /tmp/hermes-backend.env ]; then
-            echo "SMOKE-FAIL: no backend environment recorded, or no exports in /usr/bin/hermes to compare"
+          if [ -z "$wrapper_vars" ]; then
+            echo "SMOKE-FAIL: /usr/bin/hermes exports no variables to compare"
+            fail
+          fi
+          if [ ! -s /tmp/hermes-backend.env ]; then
+            echo "SMOKE-FAIL: no gateway process (python -m hermes_cli.main ... gateway run) found"
             fail
           fi
           for var in $wrapper_vars; do
             if ! grep -q "^${var}=" /tmp/hermes-backend.env; then
-              echo "SMOKE-FAIL: the backend lacks ${var}, which /usr/bin/hermes sets"
+              echo "SMOKE-FAIL: the gateway lacks ${var}, which /usr/bin/hermes sets"
               fail
             fi
           done
           echo "SMOKE-OK: app and UI booted on the gateway /usr/bin/hermes started, with its environment:" $wrapper_vars
-          echo "SMOKE-OK: window styled ($styled)"
+          echo "SMOKE-OK: ${probe//$'\n'/; }"
 
   # ---------------------------------------------------------------------------
   # Release + AUR sync: only after a merge to main or a manual dispatch ON main
