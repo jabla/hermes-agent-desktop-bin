@@ -35,9 +35,9 @@ REFERENCE_SRCINFO = f"https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h={R
 REFERENCE_PKGBUILD = f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={REFERENCE}"
 REFERENCE_LOG = f"https://aur.archlinux.org/cgit/aur.git/log/?h={REFERENCE}"
 # Fingerprint (see reference_fingerprint) of the hermes-agent-desktop PKGBUILD
-# that PKGBUILD was last compared with: hermes-agent-desktop 0.22.1-1. Update
+# that PKGBUILD was last compared with: hermes-agent-desktop 0.22.2-1. Update
 # it after porting a reference change.
-REFERENCE_PKGBUILD_SHA256 = "dd4a712f7bc0e71d70485f57f94cd7727d8e8c768f02908271a6c40d19025ac9"
+REFERENCE_PKGBUILD_SHA256 = "8f38b982c4e61d84424a030c82aab175afe0e6f43ab31d9dd6b753de6f406547"
 SHA_RE = re.compile(r"^sha256sums=\('([0-9a-f]{64})'", re.M)
 # The fields every reference release changes; everything else is packaging.
 VERSION_FIELDS_RE = re.compile(
