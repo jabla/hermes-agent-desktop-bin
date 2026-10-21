@@ -61,8 +61,12 @@ Differences from `hermes-agent-desktop` that stay in `PKGBUILD`:
   install it in CI. `build` installs every other declared dependency and runs
   makepkg with `--nodeps`. `smoke` installs a pinned `hermes-agent-bin` release
   artifact (`RUNTIME_VER` + `RUNTIME_SUM` in the workflow) together with the
-  package and boots the app on it. It fails when the backend does not start
-  through `/usr/bin/hermes` or lacks a variable that wrapper exports. It also
+  package and boots the app on it. Since 0.22.4 the app attaches to the
+  gateway that `hermes gateway ensure` starts. The smoke fails when that
+  gateway does not start through `/usr/bin/hermes`, lacks a variable that
+  wrapper exports or when a gateway ticket or API call fails. Its home is
+  group-writable, so the app mints the tickets through the interpreter
+  `hermes --print-runtime-command` names. It also
   fails when the app stops at the first-run setup, writes
   `~/.hermes/hermes-agent`, its UI never reports the local connection or its
   window is unstyled.

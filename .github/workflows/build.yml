@@ -309,8 +309,8 @@ jobs:
       # hermes-agent). Pin the one the AUR ships, never one older than the
       # desktop version: users run the app on that runtime. Change version
       # and checksum together.
-      RUNTIME_VER: 0.22.2-1
-      RUNTIME_SUM: 49b66a8b5a9ebfd5cc089be46c434a73bc97d04f90e0be8aa956a58540ba004d
+      RUNTIME_VER: 0.22.4-1
+      RUNTIME_SUM: 87b8bf92209ac019009caa850fb34ea3252cd72489a972cd60e87562d4996228
     steps:
       # Runtime dependencies are deliberately not preinstalled: pacman -U has
       # to resolve them from the packages' own depends=().
@@ -367,6 +367,11 @@ jobs:
         run: |
           mkdir -p "$HOME/.config"
           printf '%s\n' '--no-sandbox' > "$HOME/.config/hermes-desktop-flags.conf"
+          # A group-writable home (umask 002) makes the app mint its gateway
+          # tickets through the interpreter `hermes --print-runtime-command`
+          # names, the path that depends on hermes-agent-bin's launcher. A
+          # private home mints them in the app itself.
+          install -d -m 770 "$HOME/.hermes"
 
           stamp=$(grep -oE '"commit": *"[0-9a-f]{12}' /usr/lib/hermes-agent-desktop/install-stamp.json |
             grep -oE '[0-9a-f]{12}$' || true)
@@ -389,14 +394,17 @@ jobs:
 
           # Record the running backend's environment (this shell has no
           # HERMES_* variables of its own) and compare it after the boot.
-          # The backend runs `python -m hermes_cli.main [--profile P] serve`.
+          # Since 0.22.4 the app attaches to the gateway that
+          # `hermes gateway ensure` starts (no gateway service here):
+          # `python -m hermes_cli.main [selector] gateway run ...`, with the
+          # environment of the ensure call through /usr/bin/hermes.
           backend_pid() {
-            local proc args arg
+            local proc args i
             for proc in /proc/[0-9]*; do
               mapfile -d '' -t args < "$proc/cmdline" 2>/dev/null || continue
               [ "${args[1]:-}" = -m ] && [ "${args[2]:-}" = hermes_cli.main ] || continue
-              for arg in "${args[@]:3}"; do
-                if [ "$arg" = serve ]; then
+              for ((i = 3; i < ${#args[@]} - 1; i++)); do
+                if [ "${args[i]}" = gateway ] && [ "${args[i + 1]}" = run ]; then
                   echo "${proc#/proc/}"
                   return 0
                 fi
@@ -491,14 +499,22 @@ jobs:
             echo "SMOKE-FAIL: packaged install stamp ${stamp} was not loaded"
             fail
           fi
-          for line in 'via existing Hermes CLI at /usr/bin/hermes' \
-                      'Hermes backend is ready. Finalizing desktop startup' \
+          for line in 'Using existing Hermes CLI at /usr/bin/hermes' \
+                      'Hermes gateway is ready' \
                       "$ui"; do
             if ! grep -qF "$line" /tmp/hermes-desktop.log; then
               echo "SMOKE-FAIL: desktop.log lacks: $line"
               fail
             fi
           done
+          # Every API call needs a gateway ticket, minted with the
+          # interpreter `hermes --print-runtime-command` names. A failed one
+          # leaves the window up with an empty shell.
+          if grep -qE 'Gateway ticket|\[hermes:api [A-Z]+ [^]]*\] Error' /tmp/hermes-desktop.log; then
+            echo "SMOKE-FAIL: gateway ticket or API errors:"
+            grep -m5 -E 'Gateway ticket|\[hermes:api [A-Z]+ [^]]*\] Error' /tmp/hermes-desktop.log
+            fail
+          fi
           if [ "$styled_rc" -ne 0 ]; then
             echo "SMOKE-FAIL: the window is not styled: $styled"
             fail
@@ -522,7 +538,7 @@ jobs:
               fail
             fi
           done
-          echo "SMOKE-OK: app and UI booted through /usr/bin/hermes with its environment:" $wrapper_vars
+          echo "SMOKE-OK: app and UI booted on the gateway /usr/bin/hermes started, with its environment:" $wrapper_vars
           echo "SMOKE-OK: window styled ($styled)"
 
   # ---------------------------------------------------------------------------
