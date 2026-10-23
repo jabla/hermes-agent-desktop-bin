@@ -210,18 +210,6 @@ jobs:
           runuser -u builder -- sh -c 'cd "$GITHUB_WORKSPACE/aur" && makepkg --printsrcinfo | diff -q - .SRCINFO'
           runuser -u builder -- bash "$GITHUB_WORKSPACE/scripts/check-metadata.sh"
 
-      # npm's downloads: PKGBUILD keeps its npm cache in $srcdir/npm-cache.
-      # A pull request restores the caches of its own runs and of main.
-      - name: Restore the npm cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: src/npm-cache
-          key: npm-cache-${{ hashFiles('PKGBUILD', '*.patch') }}
-          restore-keys: npm-cache-
-
-      - name: Hand the cache to the build user
-        run: install -d -o builder -g builder src && chown -R builder:builder src
-
       - name: Install dependencies declared in PKGBUILD
         run: |
           # Read them from PKGBUILD itself, so CI installs exactly what
@@ -275,12 +263,19 @@ jobs:
             bsdtar -xOf "$1" .MTREE | gzip -dc |
               grep -vE '^\./\.(BUILDINFO|PKGINFO) ' | sed -E 's/ time=[0-9.]+//'
           }
-          if ! diff -u <(manifest "$artifact") <(manifest "$work/$artifact") > /tmp/wrapper.diff; then
+          # Not in <(...): a failed manifest() would go unnoticed there and two
+          # empty lists compare equal.
+          manifest "$artifact" > /tmp/artifact.mtree
+          manifest "$work/$artifact" > /tmp/wrapper.mtree
+          if [ ! -s /tmp/artifact.mtree ]; then
+            echo "::error::no manifest read from $artifact"; exit 1
+          fi
+          if ! diff -u /tmp/artifact.mtree /tmp/wrapper.mtree > /tmp/wrapper.diff; then
             echo "::error::the AUR wrapper does not install the artifact's payload unchanged"
             head -n 60 /tmp/wrapper.diff
             exit 1
           fi
-          echo "WRAPPER-OK: aur/PKGBUILD reproduces the artifact's payload ($(manifest "$artifact" | wc -l) manifest lines)"
+          echo "WRAPPER-OK: aur/PKGBUILD reproduces the artifact's payload ($(wc -l < /tmp/artifact.mtree) manifest lines)"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

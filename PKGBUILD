@@ -186,6 +186,38 @@ build() {
   npm run builder -- --linux --dir
 }
 
+# Whether a patched path (from the repository root) can change the renderer's
+# typecheck or the tests of its "ui" vitest project; in doubt it can. $2 is the
+# renderer program's file list (tsc --listFilesOnly).
+_reaches_renderer() {
+  local path=$1 program=$2 name files=() found=0
+  case "${path}" in
+    # The renderer's own sources of any type (styles, glob-loaded plugins),
+    # the app's top-level files (package.json, tsconfig.json, the vite and
+    # vitest configs) and everything outside the desktop app.
+    apps/desktop/src/* | apps/shared/*) return 0 ;;
+    apps/desktop/*/*) ;;
+    *) return 0 ;;
+  esac
+  case "${path}" in
+    # tsc follows TypeScript imports, so the list holds every such file the
+    # renderer reaches.
+    *.ts | *.tsx | *.mts | *.cts)
+      grep -qxF "${PWD}/${path}" <<<"${program}"
+      ;;
+    # tsc lists no other file type (allowJs is off): look for the name,
+    # without extension, in the renderer's sources and program files.
+    *)
+      name="${path##*/}"
+      name="${name%.*}"
+      mapfile -t files < <(grep -v '/node_modules/' <<<"${program}")
+      # A search error (exit 2) counts as found.
+      grep -rqF -- "${name}" apps/desktop/src apps/shared "${files[@]}" || found=$?
+      (( found != 1 ))
+      ;;
+  esac
+}
+
 check() {
   cd "$(_extract_dir)"
   _set_npm_env
@@ -197,19 +229,18 @@ check() {
   unset HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME
   HERMES_LAUNCHER_PATH="${srcdir}/hermes-desktop" node "${srcdir}/launcher.test.cjs"
 
-  # Upstream's full vitest suite (~1000 files) runs in upstream's CI; here it
+  # Upstream's full vitest suite (~1700 files) runs in upstream's CI; here it
   # took ~90% of the build time and exercised upstream code on Arch's system
   # Node, which the app does not run on. Run the tests that cover what the
   # patches change instead: the patched tests and every test importing a
   # patched module. The file list follows the patches automatically; diff -u
   # style headers carry a tab and a timestamp after the path.
-  local patched=()
-  mapfile -t patched < <(sed -n 's|^+++ b/apps/desktop/\([^\t]*\).*|\1|p' "${srcdir}"/*.patch | sort -u)
+  local patched=() file
+  mapfile -t patched < <(sed -n 's|^+++ b/\([^\t]*\).*|\1|p' "${srcdir}"/*.patch | sort -u)
   # A misparsed header would select no tests and pass (--passWithNoTests).
   (( ${#patched[@]} > 0 ))
-  local file
   for file in "${patched[@]}"; do
-    test -f "apps/desktop/${file}"
+    test -f "${file}"
   done
 
   # The renderer took most of the typecheck's time, its "ui" vitest project
@@ -217,35 +248,44 @@ check() {
   # The renderer's program holds src/ with those tests and every module they
   # import, so a patched file outside it reaches neither. A file list this
   # cannot read counts as reached.
-  local renderer_files reaches_renderer=1
-  renderer_files="$(cd apps/desktop && npx tsc -p . --listFilesOnly)" || renderer_files=
-  if [[ "${renderer_files}" == *"${PWD}/apps/desktop/src/"* ]] &&
-      ! grep -qxF -f <(printf "${PWD}/apps/desktop/%s\n" "${patched[@]}") <<<"${renderer_files}"; then
-    reaches_renderer=0
+  local program reaches_renderer=0
+  program="$(cd apps/desktop && npx tsc -p . --listFilesOnly)" || program=
+  if [[ "${program}" != *"${PWD}/apps/desktop/src/"* ]]; then
+    reaches_renderer=1
   fi
+  for file in "${patched[@]}"; do
+    if (( ! reaches_renderer )) && _reaches_renderer "${file}" "${program}"; then
+      printf 'check(): %s reaches the renderer\n' "${file}"
+      reaches_renderer=1
+    fi
+  done
+  (( reaches_renderer )) ||
+    echo 'check(): no patched file reaches the renderer: no renderer typecheck, no ui tests'
 
   # Upstream's typecheck script; its renderer part only when a patch reaches
-  # the renderer.
+  # the renderer. npm exec -c keeps node_modules/.bin ahead of the system's
+  # PATH, like npm run.
   local typecheck renderer='tsc -p . --noEmit'
   typecheck="$(node -p 'require("./apps/desktop/package.json").scripts.typecheck')"
   if [[ "${typecheck}" != "${renderer} && "* ]]; then
     printf 'ERROR: upstream typecheck no longer starts with "%s": %s\n' "${renderer}" "${typecheck}"
     return 1
   fi
-  if (( reaches_renderer )); then
-    npm run typecheck --workspace apps/desktop
-  else
-    (cd apps/desktop && npm exec -- sh -c "${typecheck#"${renderer} && "}")
-  fi
+  (( reaches_renderer )) || typecheck="${typecheck#"${renderer} && "}"
+  (cd apps/desktop && npm exec -c "${typecheck}")
 
   # Without HERMES_PYTHON, vitest's global setup installs Hermes' Python test
   # environment (a CPython, ffmpeg, node and the Python dependencies, from the
   # network) for the few contracts that run real hermes_cli code. The related
   # tests need none of it. python3 is those contracts' own fallback; should a
   # patch ever relate to one, it fails loudly on the missing dependencies.
-  local projects=()
-  (( reaches_renderer )) || projects=(--project electron)
-  (cd apps/desktop && HERMES_PYTHON=python3 npx vitest related --run --passWithNoTests "${projects[@]}" "${patched[@]}")
+  # Without the renderer every vitest project but "ui" runs, including ones
+  # upstream adds later.
+  # Absolute paths, set before the cd: apps/shared files lie outside vitest's
+  # root.
+  local projects=() related=("${patched[@]/#/${PWD}/}")
+  (( reaches_renderer )) || projects=(--project '!ui')
+  (cd apps/desktop && HERMES_PYTHON=python3 npx vitest related --run --passWithNoTests "${projects[@]}" "${related[@]}")
 
   # Tailwind v4 skips sources that a parent directory's .gitignore excludes
   # when the build directory is no git checkout (this repository ignores
