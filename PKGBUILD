@@ -14,7 +14,7 @@ _commit=bf0203a794a07aac3ff764972ab9087baa4e4f4e
 # prepare() points the vendored launcher and its test at it.
 _electron=electron44
 pkgver=0.22.5
-pkgrel=1
+pkgrel=2
 pkgdesc="Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
 url='https://github.com/NousResearch/hermes-agent'
@@ -47,6 +47,7 @@ source=(
   'package-managed-runtime.patch'
   'package-managed-bootstrap.patch'
   'harden-hud-modifier-monitor.patch'
+  'linux-window-opacity.patch'
   'hermes-desktop'
   'launcher.test.cjs'
 )
@@ -58,6 +59,7 @@ sha256sums=('a8f67e5ec14fea681acef6cc7ff1553f002bb6101fd2df22bfdd4b7eecc54eb2'
             '19c1f67e0b24d86d9c61237f9c05a02b66ca34a8467c298a2423d5a39106c0c4'
             '412ad7b2b6bc5149a8d236ad2cb9be54d2ac0ab78dbd3c8e16deb4f4e683713f'
             'cf8b625b00e606b5b135bf5a38a851d8a699c819139e6720eecfa043ba886e9b'
+            '78a8d2d455a28d0a6da1b63a69c8fbd1a75ac90502818ce9c8d43f2dab18576a'
             '8a677666d7d20578a88a745d83b4a75412a55fd5c184fd4f66a50dfe66adb3c6'
             '202e474fda5fd845f1ba334e503e751f746fb7d1f378fb0d3e8142b4795a025b')
 
@@ -95,6 +97,10 @@ prepare() {
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-runtime.patch"
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-bootstrap.patch"
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/harden-hud-modifier-monitor.patch"
+  # Upstream fix for NousResearch/hermes-agent#143426, not merged yet: since
+  # Electron 44 a Linux window renders the hidden translucency default (opacity
+  # ~0.94). Drop the patch once upstream ships it (prepare() then stops here).
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/linux-window-opacity.patch"
   # Keep desktop metadata aligned with the Agent release, not the separately
   # versioned upstream desktop package.json.
   npm pkg set version=${pkgver} --prefix apps/desktop
@@ -190,7 +196,6 @@ check() {
   export GIT_CEILING_DIRECTORIES="${TMPDIR:-/tmp}"
   unset HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME
   HERMES_LAUNCHER_PATH="${srcdir}/hermes-desktop" node "${srcdir}/launcher.test.cjs"
-  npm run typecheck --workspace apps/desktop
 
   # Upstream's full vitest suite (~1000 files) runs in upstream's CI; here it
   # took ~90% of the build time and exercised upstream code on Arch's system
@@ -206,7 +211,41 @@ check() {
   for file in "${patched[@]}"; do
     test -f "apps/desktop/${file}"
   done
-  (cd apps/desktop && npx vitest related --run --passWithNoTests "${patched[@]}")
+
+  # The renderer took most of the typecheck's time, its "ui" vitest project
+  # (~1300 test files to scan) most of vitest's; upstream's CI runs both.
+  # The renderer's program holds src/ with those tests and every module they
+  # import, so a patched file outside it reaches neither. A file list this
+  # cannot read counts as reached.
+  local renderer_files reaches_renderer=1
+  renderer_files="$(cd apps/desktop && npx tsc -p . --listFilesOnly)" || renderer_files=
+  if [[ "${renderer_files}" == *"${PWD}/apps/desktop/src/"* ]] &&
+      ! grep -qxF -f <(printf "${PWD}/apps/desktop/%s\n" "${patched[@]}") <<<"${renderer_files}"; then
+    reaches_renderer=0
+  fi
+
+  # Upstream's typecheck script; its renderer part only when a patch reaches
+  # the renderer.
+  local typecheck renderer='tsc -p . --noEmit'
+  typecheck="$(node -p 'require("./apps/desktop/package.json").scripts.typecheck')"
+  if [[ "${typecheck}" != "${renderer} && "* ]]; then
+    printf 'ERROR: upstream typecheck no longer starts with "%s": %s\n' "${renderer}" "${typecheck}"
+    return 1
+  fi
+  if (( reaches_renderer )); then
+    npm run typecheck --workspace apps/desktop
+  else
+    (cd apps/desktop && npm exec -- sh -c "${typecheck#"${renderer} && "}")
+  fi
+
+  # Without HERMES_PYTHON, vitest's global setup installs Hermes' Python test
+  # environment (a CPython, ffmpeg, node and the Python dependencies, from the
+  # network) for the few contracts that run real hermes_cli code. The related
+  # tests need none of it. python3 is those contracts' own fallback; should a
+  # patch ever relate to one, it fails loudly on the missing dependencies.
+  local projects=()
+  (( reaches_renderer )) || projects=(--project electron)
+  (cd apps/desktop && HERMES_PYTHON=python3 npx vitest related --run --passWithNoTests "${projects[@]}" "${patched[@]}")
 
   # Tailwind v4 skips sources that a parent directory's .gitignore excludes
   # when the build directory is no git checkout (this repository ignores

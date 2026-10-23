@@ -1,0 +1,166 @@
+From 760bf30a6d375ddd41708e73c5a943c0a4e2988b Mon Sep 17 00:00:00 2001
+From: 686f6c61 <6115107+686f6c61@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 08:51:09 +0200
+Subject: [PATCH] fix(desktop): keep the native window opacity off platforms
+ without translucency
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`translucencySupportedOn` keeps the Settings row off Linux on the strength of
+Electron documenting `setOpacity` as a no-op there, but a Linux window really
+does render faded once it is handed the value: on X11 the window carries it as
+`_NET_WM_WINDOW_OPACITY`, and a native Wayland surface composites the same fade
+into the frame. Meanwhile `defaultTranslucencyValues` only knows the mac and
+windows tables, so anything that is not Windows — Linux included — resolves the
+29% Clear default, and both the constructor option and the live apply path hand
+that value to the window with no platform gate. A Linux desktop therefore
+renders at roughly 0.94 opacity from the first frame, on either backend, and the
+one control that could undo it is the row the same feature hides.
+
+Gate the value where it reaches the window instead of trusting the row:
+`nativeOpacityFor` answers 1 when the platform has no translucency and the ramp
+unchanged everywhere else. That covers a state persisted or imported from
+another platform, and it keeps the way back — a window that already carries a
+faded opacity still gets the call to return to opaque.
+---
+ apps/desktop/electron/main.ts              | 11 +++++--
+ apps/desktop/electron/translucency.test.ts | 35 ++++++++++++++++++++++
+ apps/desktop/electron/translucency.ts      | 21 +++++++++++--
+ 3 files changed, 62 insertions(+), 5 deletions(-)
+
+diff --git a/apps/desktop/electron/main.ts b/apps/desktop/electron/main.ts
+index 3206f7e63c..12ac220361 100644
+--- a/apps/desktop/electron/main.ts
++++ b/apps/desktop/electron/main.ts
+@@ -577,6 +577,7 @@ import {
+   defaultTranslucencyState,
+   glassActive,
+   glassSupportedOn,
++  nativeOpacityFor,
+   normalizeState as normalizeTranslucency,
+   opacityNeedsSetting,
+   translucencySupportedOn,
+@@ -1497,7 +1498,11 @@ nativeTheme.themeSource = readPersistedThemeSource()
+ // — a matte blur with full-contrast text. macOS uses vibrancy; Windows 11
+ // uses DWM acrylic/mica/tabbed. Persisted so a cold launch applies it at
+ // window creation, before the renderer reports its value.
+-// macOS + Windows only; `setOpacity` is a no-op on Linux.
++// macOS + Windows only. Electron documents `setOpacity` as a no-op on Linux,
++// but a Linux window really does render faded when handed the value: X11
++// carries it as `_NET_WM_WINDOW_OPACITY` and a native Wayland surface
++// composites it into the frame. So the platform gate has to be applied to the
++// value itself — see nativeOpacityFor — and not just to the Settings row.
+ const TRANSLUCENCY_CONFIG_PATH = path.join(app.getPath('userData'), 'translucency.json')
+ 
+ function readPersistedTranslucency() {
+@@ -1535,7 +1540,7 @@ const translucencyBackedWindows = new WeakSet()
+ // window's own opacity is the record of whether that door was ever opened; see
+ // opacityNeedsSetting for why it matters that it stays shut.
+ function applyWindowOpacity(win) {
+-  const opacity = windowOpacityFor(translucencyState)
++  const opacity = nativeOpacityFor(translucencyState, TRANSLUCENCY_SUPPORTED)
+ 
+   if (typeof win.setOpacity === 'function' && opacityNeedsSetting(opacity, win.getOpacity?.() ?? 1)) {
+     win.setOpacity(opacity)
+@@ -1635,7 +1640,7 @@ function chatWindowSurfaceOptions() {
+     // RESIZABLE transparent window is unsupported and breaks (electron#48421).
+     // Every chat window is resizable.
+     ...windowBackgroundMaterialOptions(translucencyState, IS_WINDOWS, GLASS_SUPPORTED),
+-    ...windowOpacityOptions(translucencyState),
++    ...windowOpacityOptions(translucencyState, TRANSLUCENCY_SUPPORTED),
+     ...windowBackingOptions(translucencyState, getWindowBackgroundColor())
+   }
+ }
+diff --git a/apps/desktop/electron/translucency.test.ts b/apps/desktop/electron/translucency.test.ts
+index 5f4b4fad81..87d83b7eba 100644
+--- a/apps/desktop/electron/translucency.test.ts
++++ b/apps/desktop/electron/translucency.test.ts
+@@ -26,6 +26,7 @@ import {
+   glassSupportedOn,
+   glassSurfaceKeep,
+   hudFrostFor,
++  nativeOpacityFor,
+   normalizeBook,
+   normalizeMaterial,
+   normalizeMode,
+@@ -515,6 +516,40 @@ describe('windowOpacityOptions', () => {
+   })
+ })
+ 
++// Linux gets the same 29% Clear default macOS does (`defaultTranslucencyValues`
++// only distinguishes Windows), and `translucencySupportedOn` keeps the Settings
++// row away on the strength of Electron documenting `setOpacity` as a no-op
++// there. On Linux it is not a no-op on either backend: the X11 window carries
++// the value as `_NET_WM_WINDOW_OPACITY` and a native Wayland surface composites
++// the fade into the frame, so the window renders faded forever, with the only
++// control that could undo it hidden. So the value has to be gated where it
++// reaches the window, not only where the row is drawn.
++describe('nativeOpacityFor', () => {
++  it('leaves a platform without translucency fully opaque', () => {
++    expect(nativeOpacityFor(clear(29), false)).toBe(1)
++    expect(nativeOpacityFor(clear(100), false)).toBe(1)
++    expect(nativeOpacityFor(glass(60, DEFAULT_GLASS_MATERIAL, 40), false)).toBe(1)
++  })
++
++  it('answers the ramp unchanged where translucency is supported', () => {
++    for (const state of [clear(0), clear(29), clear(100)]) {
++      expect(nativeOpacityFor(state, true)).toBe(windowOpacityFor(state))
++    }
++  })
++
++  // A window that already carries a faded opacity — an upgrade from a build
++  // that set it, or a profile imported from macOS — still has to be handed the
++  // opaque value, or it stays faded for the rest of the session.
++  it('has something to say to a window that is already faded', () => {
++    expect(opacityNeedsSetting(nativeOpacityFor(clear(29), false), 0.9372)).toBe(true)
++  })
++
++  it('keeps the constructor option off an unsupported platform', () => {
++    expect(windowOpacityOptions(clear(29), false)).toStrictEqual({})
++    expect(windowOpacityOptions(clear(100), false)).toStrictEqual({})
++  })
++})
++
+ describe('opacityNeedsSetting', () => {
+   it('skips the call for an opaque window that has never been faded', () => {
+     expect(opacityNeedsSetting(1, 1)).toBe(false)
+diff --git a/apps/desktop/electron/translucency.ts b/apps/desktop/electron/translucency.ts
+index 2035392cb4..8754f7ea9c 100644
+--- a/apps/desktop/electron/translucency.ts
++++ b/apps/desktop/electron/translucency.ts
+@@ -141,12 +141,29 @@ export function opacityNeedsSetting(next: number, current = 1): boolean {
+   return next < 1 || current < 1
+ }
+ 
++/**
++ * The native opacity a window should carry, given whether this platform can do
++ * translucency at all.
++ *
++ * `translucencySupportedOn` drops the Settings row on everything but macOS and
++ * Windows, on the strength of Electron documenting `setOpacity` as a no-op
++ * elsewhere. On Linux it is not one: the X11 window carries the value as
++ * `_NET_WM_WINDOW_OPACITY`, and a native Wayland surface composites the same
++ * fade into the frame, so a Linux window really does render faded when handed
++ * the value. The gate therefore belongs where the value reaches the window, not
++ * only where the row is drawn, because a state persisted or imported from
++ * another platform reaches this path without ever passing the Settings check.
++ */
++export function nativeOpacityFor(state: TranslucencyState, supported: boolean): number {
++  return supported ? windowOpacityFor(state) : 1
++}
++
+ /**
+  * BrowserWindow constructor options for a chat window's native opacity. Empty
+  * unless the state actually asks the window to fade — see opacityNeedsSetting.
+  */
+-export function windowOpacityOptions(state: TranslucencyState): { opacity?: number } {
+-  const opacity = windowOpacityFor(state)
++export function windowOpacityOptions(state: TranslucencyState, supported = true): { opacity?: number } {
++  const opacity = nativeOpacityFor(state, supported)
+ 
+   return opacityNeedsSetting(opacity) ? { opacity } : {}
+ }
+-- 
+2.56.0
+

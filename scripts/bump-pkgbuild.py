@@ -222,9 +222,13 @@ def source_sums(info: dict[str, list[str]]) -> dict[str, str]:
 # Divergences from the AUR source package that are deliberate, also listed in
 # the README. harden-hud-modifier-monitor.patch builds the X11 HUD helper with
 # Arch's CFLAGS/LDFLAGS (full RELRO); the reference dropped it in 0.22.0-1.
+# linux-window-opacity.patch is the unmerged upstream fix for
+# NousResearch/hermes-agent#143426 (Linux windows render the hidden
+# translucency default since Electron 44); drop it once upstream ships it.
 # Everything else (patches, other sources, checksums, dependencies) must keep
 # matching the reference.
-LOCAL_ONLY_SOURCES: set[str] = {"harden-hud-modifier-monitor.patch"}
+LOCAL_ONLY_SOURCES: set[str] = {"harden-hud-modifier-monitor.patch",
+                                "linux-window-opacity.patch"}
 DIVERGENT_CHECKSUMS: set[str] = set()
 DIVERGENT_OPTDEPENDS: set[str] = set()
 # The reference's Electron runtime while it differs from _electron in
