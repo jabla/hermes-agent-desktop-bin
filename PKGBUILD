@@ -14,7 +14,7 @@ _commit=bf0203a794a07aac3ff764972ab9087baa4e4f4e
 # prepare() points the vendored launcher and its test at it.
 _electron=electron44
 pkgver=0.22.5
-pkgrel=1
+pkgrel=2
 pkgdesc="Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
 url='https://github.com/NousResearch/hermes-agent'
@@ -47,6 +47,7 @@ source=(
   'package-managed-runtime.patch'
   'package-managed-bootstrap.patch'
   'harden-hud-modifier-monitor.patch'
+  'linux-window-opacity.patch'
   'hermes-desktop'
   'launcher.test.cjs'
 )
@@ -58,6 +59,7 @@ sha256sums=('a8f67e5ec14fea681acef6cc7ff1553f002bb6101fd2df22bfdd4b7eecc54eb2'
             '19c1f67e0b24d86d9c61237f9c05a02b66ca34a8467c298a2423d5a39106c0c4'
             '412ad7b2b6bc5149a8d236ad2cb9be54d2ac0ab78dbd3c8e16deb4f4e683713f'
             'cf8b625b00e606b5b135bf5a38a851d8a699c819139e6720eecfa043ba886e9b'
+            '78a8d2d455a28d0a6da1b63a69c8fbd1a75ac90502818ce9c8d43f2dab18576a'
             '8a677666d7d20578a88a745d83b4a75412a55fd5c184fd4f66a50dfe66adb3c6'
             '202e474fda5fd845f1ba334e503e751f746fb7d1f378fb0d3e8142b4795a025b')
 
@@ -95,6 +97,10 @@ prepare() {
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-runtime.patch"
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-bootstrap.patch"
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/harden-hud-modifier-monitor.patch"
+  # Upstream fix for NousResearch/hermes-agent#143426, not merged yet: since
+  # Electron 44 a Linux window renders the hidden translucency default (opacity
+  # ~0.94). Drop the patch once upstream ships it (prepare() then stops here).
+  patch --batch --fuzz=0 -Np1 -i "${srcdir}/linux-window-opacity.patch"
   # Keep desktop metadata aligned with the Agent release, not the separately
   # versioned upstream desktop package.json.
   npm pkg set version=${pkgver} --prefix apps/desktop

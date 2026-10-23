@@ -315,7 +315,7 @@ jobs:
       # Runtime dependencies are deliberately not preinstalled: pacman -U has
       # to resolve them from the packages' own depends=().
       - name: Install xvfb
-        run: pacman -Syu --noconfirm --needed xorg-server-xvfb
+        run: pacman -Syu --noconfirm --needed xorg-server-xvfb xorg-xprop xorg-xwininfo
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -524,8 +524,26 @@ jobs:
           probe='UI never came up'
           probe_rc=1
 
+          # Settings offers no translucency on Linux, yet Electron 44 applies
+          # a native opacity there (NousResearch/hermes-agent#143426). Prints
+          # the _NET_WM_WINDOW_OPACITY of each visible app window ("none" when
+          # it has none); fails when the display shows no app window.
+          window_opacity() (
+            export DISPLAY=:99 XAUTHORITY=/tmp/xvfb.auth
+            found=1
+            for id in $(xwininfo -root -children | grep -oE '^ +0x[0-9a-f]+'); do
+              [[ $(xprop -id "$id" WM_CLASS) == *com.nousresearch.hermes* ]] || continue
+              [[ $(xwininfo -id "$id") == *'Map State: IsViewable'* ]] || continue
+              found=0
+              value=$(xprop -id "$id" _NET_WM_WINDOW_OPACITY | grep -oE '[0-9]+$' || true)
+              echo "${value:-none}"
+            done
+            return "$found"
+          )
+          opacity='not checked'
+
           started=$SECONDS
-          timeout -k 10 120 xvfb-run -a -s '-screen 0 1280x1024x24' \
+          timeout -k 10 120 xvfb-run -n 99 -f /tmp/xvfb.auth -s '-screen 0 1280x1024x24' \
             hermes-desktop --remote-debugging-port=9339 > /tmp/hermes-boot.log 2>&1 &
           app=$!
           for _ in $(seq 90); do
@@ -540,6 +558,11 @@ jobs:
             probe_rc=0
             probe=$(ELECTRON_RUN_AS_NODE=1 timeout 40 "$SMOKE_ELECTRON" /tmp/ui-probe.mjs 9339 2>&1) ||
               probe_rc=$?
+            if windows=$(window_opacity); then
+              opacity=$(sort -u <<< "$windows" | paste -sd ' ')
+            else
+              opacity='no app window on the display'
+            fi
           fi
           running=false
           if kill -0 "$app" 2>/dev/null; then
@@ -574,6 +597,10 @@ jobs:
           done
           if [ "$probe_rc" -ne 0 ]; then
             echo "SMOKE-FAIL: the window is not styled or its API call failed: $probe"
+            fail
+          fi
+          if [ "$opacity" != none ]; then
+            echo "SMOKE-FAIL: the window must be opaque, _NET_WM_WINDOW_OPACITY: $opacity"
             fail
           fi
           if grep -qE 'Waiting for first-run setup choice|first-launch bootstrap|REFUSING installer' /tmp/hermes-desktop.log; then
