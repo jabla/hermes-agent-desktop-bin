@@ -1,18 +1,17 @@
 # Build PKGBUILD for the prebuilt hermes-agent-desktop-bin package.
 # Kept in sync with the AUR source package hermes-agent-desktop
 # (https://aur.archlinux.org/packages/hermes-agent-desktop): its patches,
-# launcher and regression tests are vendored verbatim (apart from the Electron
-# major, see the README), so the prebuilt package behaves exactly like a local
-# build of the source package. The bump job warns when that package's sources
-# or dependencies drift from these. The packaged app itself is MIT-licensed
-# (Nous Research).
+# launcher and regression tests are vendored verbatim, so the prebuilt package
+# behaves exactly like a local build of the source package. The bump job warns
+# when that package's sources or dependencies drift from these. The packaged
+# app itself is MIT-licensed (Nous Research).
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
 _pkgver_tag=v0.22.5
 _commit=bf0203a794a07aac3ff764972ab9087baa4e4f4e
 # Arch's Electron runtime: the major upstream locks, or a newer one (README).
-# hermes-desktop and launcher.test.cjs name it too; prepare() checks them.
+# prepare() points the vendored launcher and its test at it.
 _electron=electron44
 pkgver=0.22.5
 pkgrel=1
@@ -59,8 +58,8 @@ sha256sums=('a8f67e5ec14fea681acef6cc7ff1553f002bb6101fd2df22bfdd4b7eecc54eb2'
             '19c1f67e0b24d86d9c61237f9c05a02b66ca34a8467c298a2423d5a39106c0c4'
             '412ad7b2b6bc5149a8d236ad2cb9be54d2ac0ab78dbd3c8e16deb4f4e683713f'
             'cf8b625b00e606b5b135bf5a38a851d8a699c819139e6720eecfa043ba886e9b'
-            '6b2e17a0411f23dcafa9a6da7d8cd850573430a45ff1353e0febbbfc84fbea9f'
-            '4b80f0d97e93a24f030a75a8b425db1315888a9ddaa7c0077c7e0401ddf58522')
+            '8a677666d7d20578a88a745d83b4a75412a55fd5c184fd4f66a50dfe66adb3c6'
+            '202e474fda5fd845f1ba334e503e751f746fb7d1f378fb0d3e8142b4795a025b')
 
 # NOTE: ${srcdir} is empty at the top level of a PKGBUILD — makepkg only sets
 # it inside the function scope of prepare()/build()/package(). Computing the
@@ -81,6 +80,16 @@ _set_npm_env() {
 prepare() {
   cd "$(_extract_dir)"
   _set_npm_env
+  # The launcher and its test come verbatim from hermes-agent-desktop, which
+  # names its own Electron runtime. sed -i replaces makepkg's symlinks with
+  # edited copies; the repository files stay as they are.
+  sed -i -E "s|/usr/bin/electron[0-9]+|/usr/bin/${_electron}|g" \
+    "${srcdir}/hermes-desktop" "${srcdir}/launcher.test.cjs"
+  if ! grep -q "^exec /usr/bin/${_electron} " "${srcdir}/hermes-desktop"; then
+    printf 'ERROR: hermes-desktop has no exec line for /usr/bin/%s\n' "${_electron}"
+    return 1
+  fi
+
   # --fuzz=0: a hunk whose context drifted must fail loudly instead of being
   # applied at a guessed location (offsets are still accepted).
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-runtime.patch"
@@ -124,13 +133,6 @@ prepare() {
   elif (( ${locked_electron%%.*} < ${system_electron%%.*} )); then
     printf 'NOTE: upstream locks Electron %s; the package runs on system Electron %s\n' \
       "${locked_electron}" "${system_electron}"
-  fi
-
-  # The vendored launcher names the runtime itself (launcher.test.cjs then
-  # checks its arguments): it must be the one depends=() pulls in.
-  if ! grep -q "^exec /usr/bin/${_electron} " "${srcdir}/hermes-desktop"; then
-    printf 'ERROR: hermes-desktop does not exec /usr/bin/%s (_electron)\n' "${_electron}"
-    return 1
   fi
 
   rm -rf "${electron_dir}/dist"
@@ -187,7 +189,7 @@ check() {
   export LANG=C.UTF-8 LC_ALL=C.UTF-8
   export GIT_CEILING_DIRECTORIES="${TMPDIR:-/tmp}"
   unset HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME
-  node "${srcdir}/launcher.test.cjs"
+  HERMES_LAUNCHER_PATH="${srcdir}/hermes-desktop" node "${srcdir}/launcher.test.cjs"
   npm run typecheck --workspace apps/desktop
 
   # Upstream's full vitest suite (~1000 files) runs in upstream's CI; here it

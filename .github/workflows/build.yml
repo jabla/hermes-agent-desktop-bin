@@ -340,8 +340,12 @@ jobs:
         run: |
           set -euo pipefail
           electron=$(sed -nE 's|^exec /usr/bin/(electron[0-9]+) .*|\1|p' /usr/bin/hermes-desktop)
-          test -x "/usr/lib/${electron}/electron"
-          echo "ELECTRON=/usr/lib/${electron}/electron" >> "$GITHUB_ENV"
+          if [ -z "$electron" ] || [ ! -x "/usr/lib/${electron}/electron" ]; then
+            echo "SMOKE-FAIL: /usr/bin/hermes-desktop names no installed electronNN (found '${electron}')"
+            exit 1
+          fi
+          # A name of its own: the app and its gateway inherit the step env.
+          echo "SMOKE_ELECTRON=/usr/lib/${electron}/electron" >> "$GITHUB_ENV"
           echo "the launcher runs ${electron}"
 
       - name: Load the installed node-pty addon with that Electron
@@ -349,7 +353,7 @@ jobs:
           node_pty=/usr/lib/hermes-agent-desktop/app.asar.unpacked/dist/node_modules/node-pty
           test -f "$node_pty/package.json"
           env ELECTRON_RUN_AS_NODE=1 NODE_PTY_ROOT="$node_pty" \
-            "$ELECTRON" -e \
+            "$SMOKE_ELECTRON" -e \
             'const pty = require(process.env.NODE_PTY_ROOT); if (typeof pty.spawn !== "function") process.exit(1)'
 
       # The app must be the version the package claims to be (prepare() writes
@@ -359,7 +363,7 @@ jobs:
           set -euo pipefail
           pkgver=$(pacman -Q hermes-agent-desktop-bin | cut -d' ' -f2)
           pkgver=${pkgver%-*}
-          appver=$(env ELECTRON_RUN_AS_NODE=1 "$ELECTRON" -p \
+          appver=$(env ELECTRON_RUN_AS_NODE=1 "$SMOKE_ELECTRON" -p \
             "require('/usr/lib/hermes-agent-desktop/app.asar/package.json').version")
           if [ "$appver" != "$pkgver" ]; then
             echo "SMOKE-FAIL: the packaged app reports version $appver, the package is $pkgver"
@@ -534,7 +538,7 @@ jobs:
             echo "UI up after $((SECONDS - started)) s"
             sleep 15
             probe_rc=0
-            probe=$(ELECTRON_RUN_AS_NODE=1 timeout 40 "$ELECTRON" /tmp/ui-probe.mjs 9339 2>&1) ||
+            probe=$(ELECTRON_RUN_AS_NODE=1 timeout 40 "$SMOKE_ELECTRON" /tmp/ui-probe.mjs 9339 2>&1) ||
               probe_rc=$?
           fi
           running=false
