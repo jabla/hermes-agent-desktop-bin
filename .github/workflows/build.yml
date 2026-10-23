@@ -210,6 +210,18 @@ jobs:
           runuser -u builder -- sh -c 'cd "$GITHUB_WORKSPACE/aur" && makepkg --printsrcinfo | diff -q - .SRCINFO'
           runuser -u builder -- bash "$GITHUB_WORKSPACE/scripts/check-metadata.sh"
 
+      # npm's downloads: PKGBUILD keeps its npm cache in $srcdir/npm-cache.
+      # A pull request restores the caches of its own runs and of main.
+      - name: Restore the npm cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src/npm-cache
+          key: npm-cache-${{ hashFiles('PKGBUILD', '*.patch') }}
+          restore-keys: npm-cache-
+
+      - name: Hand the cache to the build user
+        run: install -d -o builder -g builder src && chown -R builder:builder src
+
       - name: Install dependencies declared in PKGBUILD
         run: |
           # Read them from PKGBUILD itself, so CI installs exactly what
@@ -250,9 +262,13 @@ jobs:
           sed -i -E "s|^(sha256sums=\(')[0-9a-f]{64}('\))|\1${sha}\2|" "$work/PKGBUILD"
           grep -qx "sha256sums=('${sha}')" "$work/PKGBUILD"
           chown -R builder:builder "$work"
-          # Twice: a rebuild must still find the download intact. A wrapper
-          # whose download is named like its own output overwrites it.
-          runuser -u builder -- sh -c 'cd "$1" && makepkg -f --noconfirm --nodeps && makepkg -f --noconfirm --nodeps' sh "$work"
+          runuser -u builder -- sh -c 'cd "$1" && makepkg -f --noconfirm --nodeps' sh "$work"
+          # A rebuild must still find the download intact. A wrapper whose
+          # download is named like its own output overwrites it.
+          if ! echo "${sha}  $work/$prebuilt" | sha256sum -c --quiet; then
+            echo "::error::makepkg overwrote the wrapper's download $prebuilt"
+            exit 1
+          fi
           # Same files, modes, links and sha256 digests as the artifact;
           # only mtimes and the package metadata differ.
           manifest() {

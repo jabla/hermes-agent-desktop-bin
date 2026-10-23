@@ -196,7 +196,6 @@ check() {
   export GIT_CEILING_DIRECTORIES="${TMPDIR:-/tmp}"
   unset HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME
   HERMES_LAUNCHER_PATH="${srcdir}/hermes-desktop" node "${srcdir}/launcher.test.cjs"
-  npm run typecheck --workspace apps/desktop
 
   # Upstream's full vitest suite (~1000 files) runs in upstream's CI; here it
   # took ~90% of the build time and exercised upstream code on Arch's system
@@ -212,7 +211,41 @@ check() {
   for file in "${patched[@]}"; do
     test -f "apps/desktop/${file}"
   done
-  (cd apps/desktop && npx vitest related --run --passWithNoTests "${patched[@]}")
+
+  # The renderer took most of the typecheck's time, its "ui" vitest project
+  # (~1300 test files to scan) most of vitest's; upstream's CI runs both.
+  # The renderer's program holds src/ with those tests and every module they
+  # import, so a patched file outside it reaches neither. A file list this
+  # cannot read counts as reached.
+  local renderer_files reaches_renderer=1
+  renderer_files="$(cd apps/desktop && npx tsc -p . --listFilesOnly)" || renderer_files=
+  if [[ "${renderer_files}" == *"${PWD}/apps/desktop/src/"* ]] &&
+      ! grep -qxF -f <(printf "${PWD}/apps/desktop/%s\n" "${patched[@]}") <<<"${renderer_files}"; then
+    reaches_renderer=0
+  fi
+
+  # Upstream's typecheck script; its renderer part only when a patch reaches
+  # the renderer.
+  local typecheck renderer='tsc -p . --noEmit'
+  typecheck="$(node -p 'require("./apps/desktop/package.json").scripts.typecheck')"
+  if [[ "${typecheck}" != "${renderer} && "* ]]; then
+    printf 'ERROR: upstream typecheck no longer starts with "%s": %s\n' "${renderer}" "${typecheck}"
+    return 1
+  fi
+  if (( reaches_renderer )); then
+    npm run typecheck --workspace apps/desktop
+  else
+    (cd apps/desktop && npm exec -- sh -c "${typecheck#"${renderer} && "}")
+  fi
+
+  # Without HERMES_PYTHON, vitest's global setup installs Hermes' Python test
+  # environment (a CPython, ffmpeg, node and the Python dependencies, from the
+  # network) for the few contracts that run real hermes_cli code. The related
+  # tests need none of it. python3 is those contracts' own fallback; should a
+  # patch ever relate to one, it fails loudly on the missing dependencies.
+  local projects=()
+  (( reaches_renderer )) || projects=(--project electron)
+  (cd apps/desktop && HERMES_PYTHON=python3 npx vitest related --run --passWithNoTests "${projects[@]}" "${patched[@]}")
 
   # Tailwind v4 skips sources that a parent directory's .gitignore excludes
   # when the build directory is no git checkout (this repository ignores
