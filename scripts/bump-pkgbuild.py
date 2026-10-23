@@ -220,16 +220,20 @@ def source_sums(info: dict[str, list[str]]) -> dict[str, str]:
 # Divergences from the AUR source package that are deliberate, also listed in
 # the README. harden-hud-modifier-monitor.patch builds the X11 HUD helper with
 # Arch's CFLAGS/LDFLAGS (full RELRO); the reference dropped it in 0.22.0-1.
-# DIVERGENT_DEPENDS maps a dependency here to the reference's: upstream locks
-# Electron 44 since v0.22.5, the reference 0.22.4-1 still runs on electron42.
-# Once the reference moves too, the mapping itself reports drift: drop it.
 # Everything else (patches, other sources, checksums, dependencies) must keep
 # matching the reference.
 LOCAL_ONLY_SOURCES: set[str] = {"harden-hud-modifier-monitor.patch"}
-# The launcher and its test exec electron44 for the same reason.
-DIVERGENT_CHECKSUMS: set[str] = {"hermes-desktop", "launcher.test.cjs"}
+DIVERGENT_CHECKSUMS: set[str] = set()
 DIVERGENT_OPTDEPENDS: set[str] = set()
-DIVERGENT_DEPENDS: dict[str, str] = {"electron44": "electron42"}
+# The reference's Electron runtime while it differs from _electron in
+# PKGBUILD, else None: upstream locks Electron 44 since v0.22.5, the
+# reference 0.22.4-1 still runs on electron42. Our electronNN dependency is
+# then compared as this one; the launcher and its test, which name the
+# runtime, skip the checksum comparison.
+REFERENCE_ELECTRON: str | None = "electron42"
+ELECTRON_FILES = {"hermes-desktop", "launcher.test.cjs"}
+ELECTRON_DEP_RE = re.compile(r"electron\d+")
+ELECTRON_VAR_RE = re.compile(r"(?m)^_electron=electron(\d+)$")
 
 
 def runtime_dep(dep: str, pkgver: str) -> str:
@@ -276,7 +280,7 @@ def check_reference_drift() -> list[str]:
     or behind. Source files and runtime dependencies must match at any
     version, checksums only while both build the same pkgver — minus the
     deliberate divergences in LOCAL_ONLY_SOURCES, DIVERGENT_CHECKSUMS,
-    DIVERGENT_OPTDEPENDS and DIVERGENT_DEPENDS. The reference PKGBUILD itself
+    DIVERGENT_OPTDEPENDS and REFERENCE_ELECTRON. The reference PKGBUILD itself
     must match the state
     last reviewed here (REFERENCE_PKGBUILD_SHA256).
     """
@@ -288,10 +292,16 @@ def check_reference_drift() -> list[str]:
     ours = parse_srcinfo(printsrcinfo("."))
     drift = reference_pkgbuild_drift()
     our_ver, ref_ver = ours.get("pkgver", ["?"])[0], ref.get("pkgver", ["?"])[0]
+    ref_electron = REFERENCE_ELECTRON
+    if ref_electron and ref_electron not in ref.get("depends", []):
+        drift.append(f"{REFERENCE} no longer depends on {ref_electron}: set "
+                     f"REFERENCE_ELECTRON in scripts/bump-pkgbuild.py to its "
+                     f"electronNN, or to None if it is _electron")
+        ref_electron = None
     for key in ("depends", "optdepends"):
         here = {runtime_dep(d, our_ver) for d in ours.get(key, [])}
-        if key == "depends":
-            here = {DIVERGENT_DEPENDS.get(d, d) for d in here}
+        if key == "depends" and ref_electron:
+            here = {ref_electron if ELECTRON_DEP_RE.fullmatch(d) else d for d in here}
         there = {runtime_dep(d, ref_ver) for d in ref.get(key, [])}
         if key == "optdepends":
             here -= DIVERGENT_OPTDEPENDS
@@ -305,9 +315,12 @@ def check_reference_drift() -> list[str]:
         drift.append(f"source files: only here {sorted(here - there)}, "
                      f"only in {REFERENCE} {sorted(there - here)}")
     our_sums, ref_sums = source_sums(ours), source_sums(ref)
+    divergent = DIVERGENT_CHECKSUMS | LOCAL_ONLY_SOURCES
+    if ref_electron:
+        divergent |= ELECTRON_FILES
     if our_ver == ref_ver:
         for name in sorted(our_sums.keys() & ref_sums.keys()):
-            if name in DIVERGENT_CHECKSUMS or name in LOCAL_ONLY_SOURCES:
+            if name in divergent:
                 continue
             if our_sums[name] != ref_sums[name]:
                 drift.append(f"{name}: sha256 {our_sums[name][:12]}… here, "
@@ -319,6 +332,38 @@ def check_reference_drift() -> list[str]:
     if not drift:
         print(f"PKGBUILD is in sync with {REFERENCE} {ref_ver}")
     return drift
+
+
+def electron_lag(tag: str) -> list[str]:
+    """Report when upstream's desktop app at tag locks a newer Electron major
+    than _electron in PKGBUILD. prepare() stops on such a build, this says so
+    in the bump PR already. Warns instead of failing, like the drift check.
+    """
+    ours = int(ELECTRON_VAR_RE.search(open("PKGBUILD").read()).group(1))
+    try:
+        desktop = json.loads(fetch(f"https://raw.githubusercontent.com/{REPO}/"
+                                   f"{tag}/apps/desktop/package.json"))
+        locked = desktop["devDependencies"]["electron"]
+        major = int(re.match(r"\D*(\d+)", locked).group(1))
+    except Exception as exc:        # a moved package.json must not block the bump
+        print(f"::warning::Electron check skipped: {exc}")
+        return []
+    if major <= ours:
+        print(f"upstream {tag} locks Electron {locked}, PKGBUILD runs electron{ours}")
+        return []
+    try:
+        found = json.loads(fetch("https://archlinux.org/packages/search/json/"
+                                 f"?name=electron{major}"))["results"]
+        arch = (f"Arch ships electron{major} {found[0]['pkgver']}" if found
+                else f"Arch has no electron{major} yet")
+    except Exception as exc:
+        arch = f"Arch package lookup failed: {exc}"
+    line = (f"upstream {tag} locks Electron {locked}, newer than electron{ours}: "
+            f"prepare() stops on it ({arch}). Move _electron, the aur/PKGBUILD "
+            f"dependency, hermes-desktop and launcher.test.cjs to electron{major} "
+            f"(README, Electron)")
+    print(f"::warning title=Electron::{line}")
+    return [line]
 
 
 def gh(args: list[str]) -> subprocess.CompletedProcess:
@@ -383,6 +428,7 @@ def main() -> int:
     ).hexdigest()
     print(f"upstream tag={tag} version={version} pkgrel={pkgrel} commit={commit} "
           f"sha256={checksum}")
+    electron = electron_lag(tag)
 
     if not args.pr:
         print("dry run: no files changed (use --pr to open the bump PR)")
@@ -436,6 +482,9 @@ def main() -> int:
     body = (f"Automated bump to upstream [release {tag}]"
             f"(https://github.com/{REPO}/releases/tag/{tag}).\n\n"
             "Build + smoke run as required checks; auto-merge after green.")
+    if electron:
+        body += "\n\n**Electron** (the build stops until this is done):\n" + "\n".join(
+            f"- {line}" for line in electron)
     if drift:
         body += (f"\n\n**Drift from {REFERENCE}** (review before or after the merge):\n"
                  + "\n".join(f"- {line}" for line in drift))

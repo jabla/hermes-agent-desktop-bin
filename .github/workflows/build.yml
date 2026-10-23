@@ -226,8 +226,8 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
           # check() runs the typecheck, the vitest tests covering the patched
-          # files, the launcher test and the node-pty load test under
-          # electron44.
+          # files, the launcher test and the node-pty load test under the
+          # system Electron (_electron in PKGBUILD).
           runuser -u builder -- makepkg -f --noconfirm --nodeps
 
       - name: Show result
@@ -334,22 +334,32 @@ jobs:
           pacman -U --noconfirm "/tmp/${runtime_pkg}" pkg/*.pkg.tar.zst
           test -x /usr/bin/hermes
 
-      - name: Load the installed node-pty addon with electron44
+      # The steps below run the app's Electron the way the installed launcher
+      # does: the system electronNN it execs (_electron in PKGBUILD).
+      - name: Find the Electron runtime the launcher runs
+        run: |
+          set -euo pipefail
+          electron=$(sed -nE 's|^exec /usr/bin/(electron[0-9]+) .*|\1|p' /usr/bin/hermes-desktop)
+          test -x "/usr/lib/${electron}/electron"
+          echo "ELECTRON=/usr/lib/${electron}/electron" >> "$GITHUB_ENV"
+          echo "the launcher runs ${electron}"
+
+      - name: Load the installed node-pty addon with that Electron
         run: |
           node_pty=/usr/lib/hermes-agent-desktop/app.asar.unpacked/dist/node_modules/node-pty
           test -f "$node_pty/package.json"
           env ELECTRON_RUN_AS_NODE=1 NODE_PTY_ROOT="$node_pty" \
-            /usr/lib/electron44/electron -e \
+            "$ELECTRON" -e \
             'const pty = require(process.env.NODE_PTY_ROOT); if (typeof pty.spawn !== "function") process.exit(1)'
 
       # The app must be the version the package claims to be (prepare() writes
-      # pkgver into the desktop package.json; electron44 reads the asar).
+      # pkgver into the desktop package.json; Electron reads the asar).
       - name: Check the packaged app version
         run: |
           set -euo pipefail
           pkgver=$(pacman -Q hermes-agent-desktop-bin | cut -d' ' -f2)
           pkgver=${pkgver%-*}
-          appver=$(env ELECTRON_RUN_AS_NODE=1 /usr/lib/electron44/electron -p \
+          appver=$(env ELECTRON_RUN_AS_NODE=1 "$ELECTRON" -p \
             "require('/usr/lib/hermes-agent-desktop/app.asar/package.json').version")
           if [ "$appver" != "$pkgver" ]; then
             echo "SMOKE-FAIL: the packaged app reports version $appver, the package is $pkgver"
@@ -468,7 +478,7 @@ jobs:
           # exception. A missing install stamp does not stop the boot either.
           ui='[gateway-route win=main] published connection=local'
 
-          # Asked over the DevTools port with the package's own electron44 as
+          # Asked over the DevTools port with the package's own Electron as
           # Node. Styled: elements with Tailwind's flex class are flex boxes.
           # A renderer built without the utilities shows bare text, a UI that
           # never mounted has no such elements. API: the renderer's own
@@ -524,7 +534,7 @@ jobs:
             echo "UI up after $((SECONDS - started)) s"
             sleep 15
             probe_rc=0
-            probe=$(ELECTRON_RUN_AS_NODE=1 timeout 40 /usr/lib/electron44/electron /tmp/ui-probe.mjs 9339 2>&1) ||
+            probe=$(ELECTRON_RUN_AS_NODE=1 timeout 40 "$ELECTRON" /tmp/ui-probe.mjs 9339 2>&1) ||
               probe_rc=$?
           fi
           running=false
