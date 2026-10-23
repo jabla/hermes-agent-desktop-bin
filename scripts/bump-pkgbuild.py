@@ -220,11 +220,15 @@ def source_sums(info: dict[str, list[str]]) -> dict[str, str]:
 # Divergences from the AUR source package that are deliberate, also listed in
 # the README. harden-hud-modifier-monitor.patch builds the X11 HUD helper with
 # Arch's CFLAGS/LDFLAGS (full RELRO); the reference dropped it in 0.22.0-1.
+# DIVERGENT_DEPENDS maps a dependency here to the reference's: upstream locks
+# Electron 44 since v0.22.5, the reference 0.22.4-1 still runs on electron42.
+# Once the reference moves too, the mapping itself reports drift: drop it.
 # Everything else (patches, other sources, checksums, dependencies) must keep
 # matching the reference.
 LOCAL_ONLY_SOURCES: set[str] = {"harden-hud-modifier-monitor.patch"}
 DIVERGENT_CHECKSUMS: set[str] = set()
 DIVERGENT_OPTDEPENDS: set[str] = set()
+DIVERGENT_DEPENDS: dict[str, str] = {"electron44": "electron42"}
 
 
 def runtime_dep(dep: str, pkgver: str) -> str:
@@ -284,6 +288,8 @@ def check_reference_drift() -> list[str]:
     our_ver, ref_ver = ours.get("pkgver", ["?"])[0], ref.get("pkgver", ["?"])[0]
     for key in ("depends", "optdepends"):
         here = {runtime_dep(d, our_ver) for d in ours.get(key, [])}
+        if key == "depends":
+            here = {DIVERGENT_DEPENDS.get(d, d) for d in here}
         there = {runtime_dep(d, ref_ver) for d in ref.get(key, [])}
         if key == "optdepends":
             here -= DIVERGENT_OPTDEPENDS
