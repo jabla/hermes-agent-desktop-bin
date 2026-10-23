@@ -37,7 +37,7 @@ depends=(
 optdepends=(
   'libayatana-appindicator: tray indicator support'
 )
-makedepends=('npm')
+makedepends=('npm' 'nodejs')
 checkdepends=('nodejs')
 provides=('hermes-agent-desktop')
 conflicts=('hermes-agent-desktop')
@@ -149,10 +149,11 @@ prepare() {
   # Build node-pty's Linux native addon locally. Its npm lifecycle uses
   # node-gyp on Linux. Explicitly export makepkg's build flags because npm
   # otherwise leaves them as unexported shell variables, producing an addon
-  # without Arch's full RELRO hardening. --offline prevents any header or
-  # binary download.
+  # without Arch's full RELRO hardening. --offline keeps npm off the
+  # registry; node-gyp takes Node's headers from the nodejs package
+  # (/usr/include/node) instead of downloading them from nodejs.org.
   export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
-  npm rebuild node-pty --offline
+  npm_config_nodedir=/usr npm rebuild node-pty --offline
 }
 
 build() {
