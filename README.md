@@ -8,12 +8,12 @@ Prebuilt Arch Linux package for the [Hermes Agent desktop app](https://github.co
 yay -S hermes-agent-desktop-bin
 ```
 
-This replaces the source package `hermes-agent-desktop` (they conflict) and behaves like it: same runtime patches, launcher and dependencies. The app runs on the Hermes runtime of `hermes-agent` or `hermes-agent-bin` (a dependency) and never installs one of its own (see [Runtime](#runtime)). For the prebuilt runtime, install `hermes-agent-bin` first or pick it when your AUR helper asks which package should provide `hermes-agent`; otherwise the helper may build the source package `hermes-agent`. It cannot update itself: update through your AUR helper. Launcher: `hermes-desktop`.
+This replaces the source package `hermes-agent-desktop` (they conflict) and behaves like it: same runtime patches, launcher and dependencies, apart from the Electron runtime (see the differences under [Runtime](#runtime)). The app runs on the Hermes runtime of `hermes-agent` or `hermes-agent-bin` (a dependency) and never installs one of its own (see [Runtime](#runtime)). For the prebuilt runtime, install `hermes-agent-bin` first or pick it when your AUR helper asks which package should provide `hermes-agent`; otherwise the helper may build the source package `hermes-agent`. It cannot update itself: update through your AUR helper. Launcher: `hermes-desktop`.
 
 ## How it works
 
 - `PKGBUILD` — the *build* recipe, run in CI (archlinux container, non-root makepkg, including `check()`). Builds the app against the system `electron44` runtime, so the package stays small instead of shipping Electron.
-- `*.patch`, `hermes-desktop`, `launcher.test.cjs` — vendored verbatim from the AUR source package [hermes-agent-desktop](https://aur.archlinux.org/packages/hermes-agent-desktop), except `harden-hud-modifier-monitor.patch` (see [Runtime](#runtime)).
+- `*.patch`, `hermes-desktop`, `launcher.test.cjs` — vendored verbatim from the AUR source package [hermes-agent-desktop](https://aur.archlinux.org/packages/hermes-agent-desktop), except `harden-hud-modifier-monitor.patch` and the Electron major in `hermes-desktop` and `launcher.test.cjs` (see [Runtime](#runtime)).
 - `aur/PKGBUILD` — the AUR *wrapper*, source of truth for [hermes-agent-desktop-bin on the AUR](https://aur.archlinux.org/packages/hermes-agent-desktop-bin). Its `source` points at the GitHub Release artifact, stored under a name that differs from the package makepkg writes; `package()` only extracts the payload.
 - `scripts/bump-pkgbuild.py` — bump automation, started by hand: detects a new upstream tag, edits both PKGBUILDs + `.SRCINFO`, opens an auto-merge PR, and reports drift from `hermes-agent-desktop` (in the log and the bump PR).
 - `scripts/check-metadata.sh` — fails the build when `PKGBUILD` and `aur/PKGBUILD` disagree on version, dependencies, provides or conflicts.
@@ -53,8 +53,11 @@ Differences from `hermes-agent-desktop` that stay in `PKGBUILD`:
 - `harden-hud-modifier-monitor.patch` builds the X11 HUD helper with Arch's
   `CFLAGS`/`LDFLAGS` (full RELRO). `hermes-agent-desktop` dropped it in
   0.22.0-1.
-- `electron44` instead of `electron42`: upstream locks Electron 44 since
-  v0.22.5, `hermes-agent-desktop` 0.22.4-1 still runs on `electron42`.
+- `electron44` instead of `electron42` (`depends`, `hermes-desktop`,
+  `launcher.test.cjs`): upstream locks Electron 44 since v0.22.5,
+  `hermes-agent-desktop` 0.22.4-1 still runs on `electron42`. Arch's
+  `electron42-flags.conf` no longer applies; flags for the app go into
+  `~/.config/hermes-desktop-flags.conf`.
 
 ## Maintenance
 

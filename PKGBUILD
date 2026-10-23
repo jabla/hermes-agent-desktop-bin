@@ -1,10 +1,11 @@
 # Build PKGBUILD for the prebuilt hermes-agent-desktop-bin package.
 # Kept in sync with the AUR source package hermes-agent-desktop
 # (https://aur.archlinux.org/packages/hermes-agent-desktop): its patches,
-# launcher and regression tests are vendored verbatim, so the prebuilt package
-# behaves exactly like a local build of the source package. The bump job warns
-# when that package's sources or dependencies drift from these. The packaged
-# app itself is MIT-licensed (Nous Research).
+# launcher and regression tests are vendored verbatim (apart from the Electron
+# major, see the README), so the prebuilt package behaves exactly like a local
+# build of the source package. The bump job warns when that package's sources
+# or dependencies drift from these. The packaged app itself is MIT-licensed
+# (Nous Research).
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
@@ -98,7 +99,13 @@ prepare() {
   # it to the root node_modules since v0.22.5 (apps/desktop/node_modules
   # before), so take the copy apps/desktop resolves.
   local electron_dir
-  electron_dir="$(cd apps/desktop && node -p "path.dirname(require.resolve('electron/package.json'))")"
+  electron_dir="$(cd apps/desktop && node -p 'path.dirname(require.resolve("electron/package.json"))')"
+  # Only the build tree's own copy may be replaced below: without it (say,
+  # dev dependencies omitted) Node would resolve some electron further up.
+  if [[ "${electron_dir}" != "$(pwd -P)/"* ]]; then
+    printf 'ERROR: electron resolves outside the build tree: %s\n' "${electron_dir}"
+    return 1
+  fi
 
   # The runtime used here is the major upstream locks (44.x at the time of
   # writing). A newer runtime than upstream's lock is fine: the package ran
@@ -106,7 +113,7 @@ prepare() {
   # safe: an app written against a newer major may call APIs this runtime
   # lacks, so stop instead of shipping that build.
   local locked_electron system_electron
-  locked_electron="$(node -p "require('${electron_dir}/package.json').version")"
+  locked_electron="$(node -p 'require(process.argv[1]).version' "${electron_dir}/package.json")"
   system_electron="$(< /usr/lib/electron44/version)"
   if (( ${locked_electron%%.*} > ${system_electron%%.*} )); then
     printf 'ERROR: upstream locks Electron %s, newer than the system runtime %s — move the package to a newer electronNN\n' \

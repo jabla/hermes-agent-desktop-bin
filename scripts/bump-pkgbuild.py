@@ -226,7 +226,8 @@ def source_sums(info: dict[str, list[str]]) -> dict[str, str]:
 # Everything else (patches, other sources, checksums, dependencies) must keep
 # matching the reference.
 LOCAL_ONLY_SOURCES: set[str] = {"harden-hud-modifier-monitor.patch"}
-DIVERGENT_CHECKSUMS: set[str] = set()
+# The launcher and its test exec electron44 for the same reason.
+DIVERGENT_CHECKSUMS: set[str] = {"hermes-desktop", "launcher.test.cjs"}
 DIVERGENT_OPTDEPENDS: set[str] = set()
 DIVERGENT_DEPENDS: dict[str, str] = {"electron44": "electron42"}
 
@@ -274,8 +275,9 @@ def check_reference_drift() -> list[str]:
     Warns instead of failing: the reference may simply be one release ahead
     or behind. Source files and runtime dependencies must match at any
     version, checksums only while both build the same pkgver — minus the
-    deliberate divergences in LOCAL_ONLY_SOURCES, DIVERGENT_CHECKSUMS and
-    DIVERGENT_OPTDEPENDS. The reference PKGBUILD itself must match the state
+    deliberate divergences in LOCAL_ONLY_SOURCES, DIVERGENT_CHECKSUMS,
+    DIVERGENT_OPTDEPENDS and DIVERGENT_DEPENDS. The reference PKGBUILD itself
+    must match the state
     last reviewed here (REFERENCE_PKGBUILD_SHA256).
     """
     try:
