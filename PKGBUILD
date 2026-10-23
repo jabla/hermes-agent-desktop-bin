@@ -8,9 +8,12 @@
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
-_pkgver_tag=v0.22.4
-_commit=4d04303818b61bf3aa09278af48356315515965b
-pkgver=0.22.4
+_pkgver_tag=v0.22.5
+_commit=bf0203a794a07aac3ff764972ab9087baa4e4f4e
+# Arch's Electron runtime: the major upstream locks, or a newer one (README).
+# prepare() points the vendored launcher and its test at it.
+_electron=electron44
+pkgver=0.22.5
 pkgrel=1
 pkgdesc="Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
@@ -22,7 +25,7 @@ license=('MIT')
 # its own version. hermes-agent's own dependencies (ffmpeg, ripgrep, browsers,
 # ...) are not repeated here.
 depends=(
-  'electron42'
+  "${_electron}"
   "hermes-agent>=${pkgver}"
   'hicolor-icon-theme'
   'libnotify'
@@ -51,7 +54,7 @@ source=(
 # the tarball sum; after editing a local file run
 # `python3 scripts/bump-pkgbuild.py --sync-sums`, or the build fails at
 # "Validating source files".
-sha256sums=('808464c45097ebc4febaed2d08bb936095262c6997ba7c49ee1a0c4e7f7c593e'
+sha256sums=('a8f67e5ec14fea681acef6cc7ff1553f002bb6101fd2df22bfdd4b7eecc54eb2'
             '19c1f67e0b24d86d9c61237f9c05a02b66ca34a8467c298a2423d5a39106c0c4'
             '412ad7b2b6bc5149a8d236ad2cb9be54d2ac0ab78dbd3c8e16deb4f4e683713f'
             'cf8b625b00e606b5b135bf5a38a851d8a699c819139e6720eecfa043ba886e9b'
@@ -77,6 +80,16 @@ _set_npm_env() {
 prepare() {
   cd "$(_extract_dir)"
   _set_npm_env
+  # The launcher and its test come verbatim from hermes-agent-desktop, which
+  # names its own Electron runtime. sed -i replaces makepkg's symlinks with
+  # edited copies; the repository files stay as they are.
+  sed -i -E "s|/usr/bin/electron[0-9]+|/usr/bin/${_electron}|g" \
+    "${srcdir}/hermes-desktop" "${srcdir}/launcher.test.cjs"
+  if ! grep -q "^exec /usr/bin/${_electron} " "${srcdir}/hermes-desktop"; then
+    printf 'ERROR: hermes-desktop has no exec line for /usr/bin/%s\n' "${_electron}"
+    return 1
+  fi
+
   # --fuzz=0: a hunk whose context drifted must fail loudly instead of being
   # applied at a guessed location (offsets are still accepted).
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-runtime.patch"
@@ -94,19 +107,27 @@ prepare() {
 
   # Keep the locked Electron npm package for its TypeScript declarations and
   # tooling, but make any build helper that resolves `require('electron')` use
-  # Arch's versioned runtime instead of downloading a second copy.
-  local electron_dir='apps/desktop/node_modules/electron'
+  # Arch's versioned runtime instead of downloading a second copy. npm hoists
+  # it to the root node_modules since v0.22.5 (apps/desktop/node_modules
+  # before), so take the copy apps/desktop resolves.
+  local electron_dir
+  electron_dir="$(cd apps/desktop && node -p 'path.dirname(require.resolve("electron/package.json"))')"
+  # Only the build tree's own copy may be replaced below: without it (say,
+  # dev dependencies omitted) Node would resolve some electron further up.
+  if [[ "${electron_dir}" != "$(pwd -P)/"* ]]; then
+    printf 'ERROR: electron resolves outside the build tree: %s\n' "${electron_dir}"
+    return 1
+  fi
 
-  # Upstream locks an older Electron major (40.x at the time of writing) than
-  # the runtime used here. electron42 is the oldest major that still receives
-  # security fixes, so running the app on a newer runtime is deliberate. The
+  # The runtime used here (_electron) is the major upstream locks or a newer
+  # one: the package ran on electron42 while upstream locked 40.x. The
   # opposite direction is not safe: an app written against a newer major may
   # call APIs this runtime lacks, so stop instead of shipping that build.
   local locked_electron system_electron
-  locked_electron="$(node -p "require('./${electron_dir}/package.json').version")"
-  system_electron="$(< /usr/lib/electron42/version)"
+  locked_electron="$(node -p 'require(process.argv[1]).version' "${electron_dir}/package.json")"
+  system_electron="$(< "/usr/lib/${_electron}/version")"
   if (( ${locked_electron%%.*} > ${system_electron%%.*} )); then
-    printf 'ERROR: upstream locks Electron %s, newer than the system runtime %s — move the package to a newer electronNN\n' \
+    printf 'ERROR: upstream locks Electron %s, newer than the system runtime %s — move _electron to a newer electronNN (README)\n' \
       "${locked_electron}" "${system_electron}"
     return 1
   elif (( ${locked_electron%%.*} < ${system_electron%%.*} )); then
@@ -115,7 +136,7 @@ prepare() {
   fi
 
   rm -rf "${electron_dir}/dist"
-  ln -s /usr/lib/electron42 "${electron_dir}/dist"
+  ln -s "/usr/lib/${_electron}" "${electron_dir}/dist"
   printf '%s' 'electron' > "${electron_dir}/path.txt"
   test -x "${electron_dir}/dist/electron"
 
@@ -140,7 +161,7 @@ build() {
   # Keep upstream's package.json and lockfile pins intact for deterministic
   # npm ci. electron-builder still prepares a throwaway Electron zip for the
   # packager; package() keeps only the app resources and the launcher runs
-  # Arch's electron42.
+  # Arch's ${_electron}.
   npm run build
 
   # Upstream writes the wall clock into the bundled install stamp. Normalize it
@@ -168,7 +189,7 @@ check() {
   export LANG=C.UTF-8 LC_ALL=C.UTF-8
   export GIT_CEILING_DIRECTORIES="${TMPDIR:-/tmp}"
   unset HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME
-  node "${srcdir}/launcher.test.cjs"
+  HERMES_LAUNCHER_PATH="${srcdir}/hermes-desktop" node "${srcdir}/launcher.test.cjs"
   npm run typecheck --workspace apps/desktop
 
   # Upstream's full vitest suite (~1000 files) runs in upstream's CI; here it
@@ -203,10 +224,10 @@ check() {
   # N-API build must not merely load under makepkg's system Node.
   local node_pty_root="${PWD}/apps/desktop/release/linux-unpacked/resources/app.asar.unpacked/dist/node_modules/node-pty"
   test -f "${node_pty_root}/package.json"
-  # Bypass Arch's launcher here: it injects the user's electron42 flags, which
-  # are valid in Chromium mode but rejected while ELECTRON_RUN_AS_NODE is set.
+  # Bypass Arch's launcher here: it injects the user's electronNN-flags.conf,
+  # valid in Chromium mode but rejected while ELECTRON_RUN_AS_NODE is set.
   env ELECTRON_RUN_AS_NODE=1 NODE_PTY_ROOT="${node_pty_root}" \
-    /usr/lib/electron42/electron -e \
+    "/usr/lib/${_electron}/electron" -e \
     'const pty = require(process.env.NODE_PTY_ROOT); if (typeof pty.spawn !== "function") process.exit(1)'
 }
 
@@ -228,8 +249,8 @@ package() {
   fi
   # Only the first three resources are installed. The skipped ones are
   # upstream's Windows icon, electron-updater metadata (Hermes ships no
-  # electron-updater) and Electron's own default app, which electron42
-  # provides. Anything else is a new runtime resource the app would miss on
+  # electron-updater) and Electron's own default app, which the system
+  # Electron provides. Anything else is a new runtime resource the app would miss on
   # Linux, so stop until it is packaged or deliberately added here.
   local entry
   for entry in "${resources}"/*; do

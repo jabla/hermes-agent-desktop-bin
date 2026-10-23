@@ -22,11 +22,13 @@ runs this script through runuser as an unprivileged user.
 """
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+import tarfile
 import urllib.request
 
 REPO = "NousResearch/hermes-agent"
@@ -58,8 +60,8 @@ def api(path: str):
         return json.load(r)
 
 
-def fetch(url: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=600) as r:
+def fetch(url: str, timeout: int = 600) -> bytes:
+    with urllib.request.urlopen(url, timeout=timeout) as r:
         return r.read()
 
 
@@ -225,6 +227,15 @@ def source_sums(info: dict[str, list[str]]) -> dict[str, str]:
 LOCAL_ONLY_SOURCES: set[str] = {"harden-hud-modifier-monitor.patch"}
 DIVERGENT_CHECKSUMS: set[str] = set()
 DIVERGENT_OPTDEPENDS: set[str] = set()
+# The reference's Electron runtime while it differs from _electron in
+# PKGBUILD, else None: upstream locks Electron 44 since v0.22.5, the
+# reference 0.22.4-1 still runs on electron42. Our electronNN dependency is
+# then compared as this one. The launcher and its test stay verbatim either
+# way: prepare() points them at _electron.
+REFERENCE_ELECTRON: str | None = "electron42"
+ELECTRON_DEP_RE = re.compile(r"electron\d+")
+ELECTRON_VAR_RE = re.compile(r"""(?m)^_electron=['"]?electron(\d+)\b""")
+ARCH_SEARCH = "https://archlinux.org/packages/search/json/?name="
 
 
 def runtime_dep(dep: str, pkgver: str) -> str:
@@ -270,8 +281,9 @@ def check_reference_drift() -> list[str]:
     Warns instead of failing: the reference may simply be one release ahead
     or behind. Source files and runtime dependencies must match at any
     version, checksums only while both build the same pkgver — minus the
-    deliberate divergences in LOCAL_ONLY_SOURCES, DIVERGENT_CHECKSUMS and
-    DIVERGENT_OPTDEPENDS. The reference PKGBUILD itself must match the state
+    deliberate divergences in LOCAL_ONLY_SOURCES, DIVERGENT_CHECKSUMS,
+    DIVERGENT_OPTDEPENDS and REFERENCE_ELECTRON. The reference PKGBUILD itself
+    must match the state
     last reviewed here (REFERENCE_PKGBUILD_SHA256).
     """
     try:
@@ -282,8 +294,21 @@ def check_reference_drift() -> list[str]:
     ours = parse_srcinfo(printsrcinfo("."))
     drift = reference_pkgbuild_drift()
     our_ver, ref_ver = ours.get("pkgver", ["?"])[0], ref.get("pkgver", ["?"])[0]
+    ref_electron = REFERENCE_ELECTRON
+    our_electron = [d for d in ours.get("depends", []) if ELECTRON_DEP_RE.fullmatch(d)]
+    if ref_electron and ref_electron in our_electron:
+        drift.append(f"REFERENCE_ELECTRON is {ref_electron}, the runtime of PKGBUILD "
+                     f"too: set it to None in scripts/bump-pkgbuild.py")
+        ref_electron = None
+    elif ref_electron and ref_electron not in ref.get("depends", []):
+        drift.append(f"{REFERENCE} no longer depends on {ref_electron}: set "
+                     f"REFERENCE_ELECTRON in scripts/bump-pkgbuild.py to its "
+                     f"electronNN, or to None if it is _electron")
+        ref_electron = None
     for key in ("depends", "optdepends"):
         here = {runtime_dep(d, our_ver) for d in ours.get(key, [])}
+        if key == "depends" and ref_electron:
+            here = {ref_electron if ELECTRON_DEP_RE.fullmatch(d) else d for d in here}
         there = {runtime_dep(d, ref_ver) for d in ref.get(key, [])}
         if key == "optdepends":
             here -= DIVERGENT_OPTDEPENDS
@@ -297,9 +322,10 @@ def check_reference_drift() -> list[str]:
         drift.append(f"source files: only here {sorted(here - there)}, "
                      f"only in {REFERENCE} {sorted(there - here)}")
     our_sums, ref_sums = source_sums(ours), source_sums(ref)
+    divergent = DIVERGENT_CHECKSUMS | LOCAL_ONLY_SOURCES
     if our_ver == ref_ver:
         for name in sorted(our_sums.keys() & ref_sums.keys()):
-            if name in DIVERGENT_CHECKSUMS or name in LOCAL_ONLY_SOURCES:
+            if name in divergent:
                 continue
             if our_sums[name] != ref_sums[name]:
                 drift.append(f"{name}: sha256 {our_sums[name][:12]}… here, "
@@ -311,6 +337,50 @@ def check_reference_drift() -> list[str]:
     if not drift:
         print(f"PKGBUILD is in sync with {REFERENCE} {ref_ver}")
     return drift
+
+
+def locked_electron(tarball: bytes) -> str:
+    """The Electron version upstream's lockfile installs for apps/desktop,
+    the one prepare() compares with the system runtime."""
+    with tarfile.open(fileobj=io.BytesIO(tarball)) as tar:
+        member = next(m for m in tar
+                      if m.name.count("/") == 1 and m.name.endswith("/package-lock.json"))
+        packages = json.load(tar.extractfile(member))["packages"]
+    for path in ("apps/desktop/node_modules/electron", "node_modules/electron"):
+        if path in packages:
+            return packages[path]["version"]
+    raise KeyError("package-lock.json installs no electron")
+
+
+def electron_lag(tag: str, tarball: bytes) -> list[str]:
+    """Report when upstream's desktop app at tag locks a newer Electron major
+    than _electron in PKGBUILD. prepare() stops on such a build, this says so
+    in the bump PR already. Warns instead of failing, like the drift check.
+    """
+    try:
+        ours = int(ELECTRON_VAR_RE.search(open("PKGBUILD").read()).group(1))
+        locked = locked_electron(tarball)
+        major = int(locked.split(".")[0])
+    except Exception as exc:        # advisory: never blocks the bump
+        print(f"::warning::Electron check skipped: {exc!r}")
+        return []
+    if major <= ours:
+        print(f"upstream {tag} locks Electron {locked}, PKGBUILD runs electron{ours}")
+        return []
+    try:
+        # Only the repositories the build container enables, not [*-testing].
+        found = [r for r in json.loads(fetch(f"{ARCH_SEARCH}electron{major}", timeout=20))["results"]
+                 if r["repo"] in ("core", "extra")]
+        arch = (f"Arch ships electron{major} {found[0]['pkgver']}" if found
+                else f"Arch has no electron{major} yet")
+    except Exception as exc:
+        arch = f"Arch package lookup failed: {exc}"
+    line = (f"upstream {tag} locks Electron {locked}, newer than electron{ours}: "
+            f"prepare() stops on it ({arch}). Move _electron and the aur/PKGBUILD "
+            f"dependency to electron{major}; while {REFERENCE} stays on its runtime, "
+            f"REFERENCE_ELECTRON names it (README, Electron)")
+    print(f"::warning title=Electron::{line}")
+    return [line]
 
 
 def gh(args: list[str]) -> subprocess.CompletedProcess:
@@ -370,11 +440,11 @@ def main() -> int:
     if obj["type"] == "tag":
         commit = api(f"/repos/{REPO}/git/tags/{commit}")["object"]["sha"]
 
-    checksum = hashlib.sha256(
-        fetch(f"https://github.com/{REPO}/archive/refs/tags/{tag}.tar.gz")
-    ).hexdigest()
+    tarball = fetch(f"https://github.com/{REPO}/archive/refs/tags/{tag}.tar.gz")
+    checksum = hashlib.sha256(tarball).hexdigest()
     print(f"upstream tag={tag} version={version} pkgrel={pkgrel} commit={commit} "
           f"sha256={checksum}")
+    electron = electron_lag(tag, tarball)
 
     if not args.pr:
         print("dry run: no files changed (use --pr to open the bump PR)")
@@ -428,6 +498,9 @@ def main() -> int:
     body = (f"Automated bump to upstream [release {tag}]"
             f"(https://github.com/{REPO}/releases/tag/{tag}).\n\n"
             "Build + smoke run as required checks; auto-merge after green.")
+    if electron:
+        body += "\n\n**Electron** (the build stops until this is done):\n" + "\n".join(
+            f"- {line}" for line in electron)
     if drift:
         body += (f"\n\n**Drift from {REFERENCE}** (review before or after the merge):\n"
                  + "\n".join(f"- {line}" for line in drift))
