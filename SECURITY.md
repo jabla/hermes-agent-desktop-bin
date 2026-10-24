@@ -6,13 +6,18 @@ This repository contains packaging automation for the upstream Hermes Agent
 desktop app:
 
 - `PKGBUILD` / `aur/PKGBUILD` — recipes, no application code
+- `*.patch`, `hermes-desktop`, `launcher.test.cjs` — the patches applied to
+  the upstream app (package-managed runtime, HUD helper flags, window
+  opacity), the launcher and its test
 - `.github/workflows/build.yml` — CI pipeline (bump, plan, build, smoke,
   release, aur-sync)
 - `scripts/` — bump automation
 
 The packaged application itself lives at
 https://github.com/NousResearch/hermes-agent — report application
-vulnerabilities there.
+vulnerabilities there. A way around the patched guards (the in-app updater,
+its channel switch or the first-run bootstrap writing an agent tree) is a bug
+of this package: report it here.
 
 ## Supply-chain notes
 

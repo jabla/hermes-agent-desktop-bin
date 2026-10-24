@@ -54,11 +54,11 @@ source=(
 # `python3 scripts/bump-pkgbuild.py --sync-sums`, or the build fails at
 # "Validating source files".
 sha256sums=('a8f67e5ec14fea681acef6cc7ff1553f002bb6101fd2df22bfdd4b7eecc54eb2'
-            '2476450254338787298e05ef5cf3c1496cf04b3d7071be7c9e4cab7cb76b9d33'
+            'f0d986b97c5c329af7bd8cd60018a899ced4d202d1859551b868d1ccdd4dd7ec'
             '412ad7b2b6bc5149a8d236ad2cb9be54d2ac0ab78dbd3c8e16deb4f4e683713f'
             'ac4077eb2846f90d36858c69d8fe99988606caa0059e85a9606273bb7bc29077'
             '78a8d2d455a28d0a6da1b63a69c8fbd1a75ac90502818ce9c8d43f2dab18576a'
-            '6b2e17a0411f23dcafa9a6da7d8cd850573430a45ff1353e0febbbfc84fbea9f'
+            '194cb7b1eb8d002b829075c1c85065b2e0a1ff59f2c4a2dc869315301a75da42'
             '4b80f0d97e93a24f030a75a8b425db1315888a9ddaa7c0077c7e0401ddf58522')
 
 # NOTE: ${srcdir} is empty at the top level of a PKGBUILD — makepkg only sets
