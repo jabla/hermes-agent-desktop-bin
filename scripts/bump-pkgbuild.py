@@ -8,11 +8,6 @@ Three modes:
   * --sync-sums: only refresh the checksums of the local source files
     (patches, launcher, tests) in PKGBUILD after editing one of them.
 
-Every bump run also compares PKGBUILD with the AUR source package
-hermes-agent-desktop (its sources, checksums and dependencies, and its
-PKGBUILD with the state last reviewed here) and reports drift as a warning,
-also in the bump PR.
-
 Exits 0 without changes when PKGBUILD already tracks the latest upstream tag.
 Requires: gh (GH_TOKEN + GH_REPO env), makepkg available for .SRCINFO regen,
 vercmp (pacman) for the version order. UPSTREAM_API_TOKEN, when set,
@@ -32,19 +27,7 @@ import tarfile
 import urllib.request
 
 REPO = "NousResearch/hermes-agent"
-REFERENCE = "hermes-agent-desktop"
-REFERENCE_SRCINFO = f"https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h={REFERENCE}"
-REFERENCE_PKGBUILD = f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={REFERENCE}"
-REFERENCE_LOG = f"https://aur.archlinux.org/cgit/aur.git/log/?h={REFERENCE}"
-# Fingerprint (see reference_fingerprint) of the hermes-agent-desktop PKGBUILD
-# that PKGBUILD was last compared with: hermes-agent-desktop 0.22.2-1. Update
-# it after porting a reference change.
-REFERENCE_PKGBUILD_SHA256 = "8f38b982c4e61d84424a030c82aab175afe0e6f43ab31d9dd6b753de6f406547"
 SHA_RE = re.compile(r"^sha256sums=\('([0-9a-f]{64})'", re.M)
-# The fields every reference release changes; everything else is packaging.
-VERSION_FIELDS_RE = re.compile(
-    r"(?ms)^(?:pkgver|pkgrel|_pkgver_tag|_commit)=[^\n]*\n"
-    r"|^(?:sha256sums|sha512sums|b2sums|md5sums)=\(.*?\)[^\n]*\n")
 
 
 def api(path: str):
@@ -203,144 +186,8 @@ def regen_srcinfo(aur_dir: str):
         f.write(srcinfo)
 
 
-def parse_srcinfo(text: str) -> dict[str, list[str]]:
-    fields: dict[str, list[str]] = {}
-    for line in text.splitlines():
-        key, sep, value = line.strip().partition(" = ")
-        if sep:
-            fields.setdefault(key, []).append(value)
-    return fields
-
-
-def source_sums(info: dict[str, list[str]]) -> dict[str, str]:
-    """Map each source file name (before `::`, else the URL basename) to its sum."""
-    names = [s.split("::", 1)[0] if "::" in s else s.rsplit("/", 1)[-1]
-             for s in info.get("source", [])]
-    return dict(zip(names, info.get("sha256sums", [])))
-
-
-# Divergences from the AUR source package that are deliberate, also listed in
-# the README. harden-hud-modifier-monitor.patch builds the X11 HUD helper with
-# Arch's CFLAGS/LDFLAGS (full RELRO); the reference dropped it in 0.22.0-1.
-# linux-window-opacity.patch is the unmerged upstream fix for
-# NousResearch/hermes-agent#143426 (Linux windows render the hidden
-# translucency default since Electron 44); drop it once upstream ships it.
-# Everything else (patches, other sources, checksums, dependencies) must keep
-# matching the reference.
-LOCAL_ONLY_SOURCES: set[str] = {"harden-hud-modifier-monitor.patch",
-                                "linux-window-opacity.patch"}
-DIVERGENT_CHECKSUMS: set[str] = set()
-DIVERGENT_OPTDEPENDS: set[str] = set()
-# The reference's Electron runtime while it differs from _electron in
-# PKGBUILD, else None: upstream locks Electron 44 since v0.22.5, the
-# reference 0.22.4-1 still runs on electron42. Our electronNN dependency is
-# then compared as this one. The launcher and its test stay verbatim either
-# way: prepare() points them at _electron.
-REFERENCE_ELECTRON: str | None = "electron42"
-ELECTRON_DEP_RE = re.compile(r"electron\d+")
 ELECTRON_VAR_RE = re.compile(r"""(?m)^_electron=['"]?electron(\d+)\b""")
 ARCH_SEARCH = "https://archlinux.org/packages/search/json/?name="
-
-
-def runtime_dep(dep: str, pkgver: str) -> str:
-    """hermes-agent>=<own pkgver> as one value, whichever version it names:
-    both packages need a runtime of at least their own version."""
-    return "hermes-agent>=${pkgver}" if dep == f"hermes-agent>={pkgver}" else dep
-
-
-def reference_fingerprint(text: str) -> str:
-    """sha256 of a PKGBUILD without the fields every release changes."""
-    m = re.search(r"(?m)^pkgver=(\S+)$", text)
-    if m:
-        # The reference writes its runtime dependency with the version itself.
-        text = text.replace(f"'hermes-agent>={m.group(1)}'", "'hermes-agent>=${pkgver}'")
-    return hashlib.sha256(VERSION_FIELDS_RE.sub("", text).encode()).hexdigest()
-
-
-def reference_pkgbuild_drift() -> list[str]:
-    """Report when the reference PKGBUILD changed beyond its version fields.
-
-    The .SRCINFO comparison sees sources, checksums and dependencies, but not
-    prepare()/build()/check()/package(), which PKGBUILD follows apart from the
-    deliberate divergences listed in the README. A change there usually has
-    to be ported. Never copies anything.
-    """
-    try:
-        text = fetch(REFERENCE_PKGBUILD).decode()
-    except Exception as exc:        # AUR outages must not block the bump
-        print(f"::warning::{REFERENCE} PKGBUILD comparison skipped: {exc}")
-        return []
-    current = reference_fingerprint(text)
-    if current == REFERENCE_PKGBUILD_SHA256:
-        return []
-    return [f"the {REFERENCE} PKGBUILD changed beyond its version fields since "
-            f"it was last reviewed ({REFERENCE_LOG}); port what applies to "
-            f"PKGBUILD, then set REFERENCE_PKGBUILD_SHA256 in "
-            f"scripts/bump-pkgbuild.py to {current}"]
-
-
-def check_reference_drift() -> list[str]:
-    """Compare PKGBUILD with the AUR source package it is kept in sync with.
-
-    Warns instead of failing: the reference may simply be one release ahead
-    or behind. Source files and runtime dependencies must match at any
-    version, checksums only while both build the same pkgver — minus the
-    deliberate divergences in LOCAL_ONLY_SOURCES, DIVERGENT_CHECKSUMS,
-    DIVERGENT_OPTDEPENDS and REFERENCE_ELECTRON. The reference PKGBUILD itself
-    must match the state
-    last reviewed here (REFERENCE_PKGBUILD_SHA256).
-    """
-    try:
-        ref = parse_srcinfo(fetch(REFERENCE_SRCINFO).decode())
-    except Exception as exc:        # AUR outages must not block the bump
-        print(f"::warning::{REFERENCE} drift check skipped: {exc}")
-        return []
-    ours = parse_srcinfo(printsrcinfo("."))
-    drift = reference_pkgbuild_drift()
-    our_ver, ref_ver = ours.get("pkgver", ["?"])[0], ref.get("pkgver", ["?"])[0]
-    ref_electron = REFERENCE_ELECTRON
-    our_electron = [d for d in ours.get("depends", []) if ELECTRON_DEP_RE.fullmatch(d)]
-    if ref_electron and ref_electron in our_electron:
-        drift.append(f"REFERENCE_ELECTRON is {ref_electron}, the runtime of PKGBUILD "
-                     f"too: set it to None in scripts/bump-pkgbuild.py")
-        ref_electron = None
-    elif ref_electron and ref_electron not in ref.get("depends", []):
-        drift.append(f"{REFERENCE} no longer depends on {ref_electron}: set "
-                     f"REFERENCE_ELECTRON in scripts/bump-pkgbuild.py to its "
-                     f"electronNN, or to None if it is _electron")
-        ref_electron = None
-    for key in ("depends", "optdepends"):
-        here = {runtime_dep(d, our_ver) for d in ours.get(key, [])}
-        if key == "depends" and ref_electron:
-            here = {ref_electron if ELECTRON_DEP_RE.fullmatch(d) else d for d in here}
-        there = {runtime_dep(d, ref_ver) for d in ref.get(key, [])}
-        if key == "optdepends":
-            here -= DIVERGENT_OPTDEPENDS
-        if here != there:
-            drift.append(f"{key}: only here {sorted(here - there)}, "
-                         f"only in {REFERENCE} {sorted(there - here)}")
-    # Local files only: the upstream tarball's name carries the release tag.
-    here = {s for s in ours.get("source", []) if "://" not in s} - LOCAL_ONLY_SOURCES
-    there = {s for s in ref.get("source", []) if "://" not in s}
-    if here != there:
-        drift.append(f"source files: only here {sorted(here - there)}, "
-                     f"only in {REFERENCE} {sorted(there - here)}")
-    our_sums, ref_sums = source_sums(ours), source_sums(ref)
-    divergent = DIVERGENT_CHECKSUMS | LOCAL_ONLY_SOURCES
-    if our_ver == ref_ver:
-        for name in sorted(our_sums.keys() & ref_sums.keys()):
-            if name in divergent:
-                continue
-            if our_sums[name] != ref_sums[name]:
-                drift.append(f"{name}: sha256 {our_sums[name][:12]}… here, "
-                             f"{ref_sums[name][:12]}… in {REFERENCE}")
-    else:
-        print(f"{REFERENCE} is at {ref_ver}, PKGBUILD at {our_ver}: checksums not compared")
-    for line in drift:
-        print(f"::warning title=Drift from {REFERENCE}::{line}")
-    if not drift:
-        print(f"PKGBUILD is in sync with {REFERENCE} {ref_ver}")
-    return drift
 
 
 def locked_electron(tarball: bytes) -> str:
@@ -359,7 +206,7 @@ def locked_electron(tarball: bytes) -> str:
 def electron_lag(tag: str, tarball: bytes) -> list[str]:
     """Report when upstream's desktop app at tag locks a newer Electron major
     than _electron in PKGBUILD. prepare() stops on such a build, this says so
-    in the bump PR already. Warns instead of failing, like the drift check.
+    in the bump PR already. Warns instead of failing.
     """
     try:
         ours = int(ELECTRON_VAR_RE.search(open("PKGBUILD").read()).group(1))
@@ -381,8 +228,7 @@ def electron_lag(tag: str, tarball: bytes) -> list[str]:
         arch = f"Arch package lookup failed: {exc}"
     line = (f"upstream {tag} locks Electron {locked}, newer than electron{ours}: "
             f"prepare() stops on it ({arch}). Move _electron and the aur/PKGBUILD "
-            f"dependency to electron{major}; while {REFERENCE} stays on its runtime, "
-            f"REFERENCE_ELECTRON names it (README, Electron)")
+            f"dependency to electron{major} (README, Electron)")
     print(f"::warning title=Electron::{line}")
     return [line]
 
@@ -409,7 +255,6 @@ def main() -> int:
         return 0
 
     require_non_root()
-    drift = check_reference_drift()
 
     rel = api(f"/repos/{REPO}/releases/latest")
     tag = rel["tag_name"]
@@ -505,9 +350,6 @@ def main() -> int:
     if electron:
         body += "\n\n**Electron** (the build stops until this is done):\n" + "\n".join(
             f"- {line}" for line in electron)
-    if drift:
-        body += (f"\n\n**Drift from {REFERENCE}** (review before or after the merge):\n"
-                 + "\n".join(f"- {line}" for line in drift))
     r = gh(["pr", "create", "--base", "main", "--head", branch,
             "--title", f"chore: bump to {tag} (v{full_version})",
             "--body", body])

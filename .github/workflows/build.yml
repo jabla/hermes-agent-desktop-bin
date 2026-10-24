@@ -499,7 +499,9 @@ jobs:
           # never mounted has no such elements. API: the renderer's own
           # bridge requests /api/status, which needs a gateway ticket. A
           # failure is retried for a few seconds (a gateway that is still
-          # settling), then reported.
+          # settling), then reported. Channel: the package-managed runtime
+          # refuses the update channel switch (package-managed-runtime.patch)
+          # instead of running upstream's checkout updater on ~/.hermes.
           cat > /tmp/ui-probe.mjs <<'EOF'
           const port = process.argv[2]
           const page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json())
@@ -530,7 +532,11 @@ jobs:
             await new Promise(resolve => setTimeout(resolve, 2000))
           }
           console.log(api.ok ? `GET /api/status answered (${api.keys} fields)` : `GET /api/status failed: ${api.error}`)
-          process.exit(all > 0 && flex > 0 && api.ok ? 0 : 1)
+          const channel = await evaluate(`window.hermesDesktop.updates.setChannel('stable').then(
+            () => 'switched', e => String(e?.message ?? e))`) ?? 'no reply'
+          const refused = channel.includes('managed by the hermes-agent system package')
+          console.log(refused ? 'the update channel switch is refused' : `the update channel switch was not refused: ${channel}`)
+          process.exit(all > 0 && flex > 0 && api.ok && refused ? 0 : 1)
           EOF
           probe='UI never came up'
           probe_rc=1
@@ -538,7 +544,8 @@ jobs:
           # Settings offers no translucency on Linux, yet Electron 44 applies
           # a native opacity there (NousResearch/hermes-agent#143426). Prints
           # the _NET_WM_WINDOW_OPACITY of each visible app window ("none" when
-          # it has none); fails when the display shows no app window.
+          # it has none, 4294967295 = 0xffffffff is fully opaque); fails when
+          # the display shows no app window.
           window_opacity() (
             export DISPLAY=:99 XAUTHORITY=/tmp/xvfb.auth
             found=1
@@ -607,10 +614,10 @@ jobs:
             fi
           done
           if [ "$probe_rc" -ne 0 ]; then
-            echo "SMOKE-FAIL: the window is not styled or its API call failed: $probe"
+            echo "SMOKE-FAIL: the window is not styled, its API call failed or it switched the update channel: $probe"
             fail
           fi
-          if [ "$opacity" != none ]; then
+          if [[ ! $opacity =~ ^(none|4294967295)( (none|4294967295))*$ ]]; then
             echo "SMOKE-FAIL: the window must be opaque, _NET_WM_WINDOW_OPACITY: $opacity"
             fail
           fi

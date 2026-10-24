@@ -1,6 +1,6 @@
 --- a/apps/desktop/electron/main.ts
 +++ b/apps/desktop/electron/main.ts
-@@ -734,6 +734,9 @@
+@@ -727,6 +727,9 @@
  
  const DEV_SERVER = process.env.HERMES_DESKTOP_DEV_SERVER
  const IS_PACKAGED = app.isPackaged || Boolean(process.env.HERMES_DESKTOP_IS_PACKAGED)
@@ -10,7 +10,7 @@
  const IS_MAC = process.platform === 'darwin'
  const IS_WINDOWS = process.platform === 'win32'
  const IS_WSL = isWslEnvironment()
-@@ -4734,6 +4737,14 @@
+@@ -4397,6 +4400,14 @@
  // Detection (checkUpdates / commit changelog / "N behind") stays in the UI;
  // only this apply action changed.
  async function applyUpdates(): Promise<UpdaterApplyResultWire> {
@@ -25,7 +25,7 @@
    return updateOperation.apply(async (): Promise<UpdaterApplyResultWire> => {
      updateInFlight = true
      let handedOff: boolean = false
-@@ -5471,6 +5482,17 @@
+@@ -5137,6 +5148,17 @@
    }
  
    if (backend.kind === 'bootstrap-needed') {
@@ -43,7 +43,7 @@
      rememberLog('[bootstrap] no Hermes install found; starting first-launch bootstrap')
  
      if (await handOffWindowsBootstrapRecovery('bootstrap-needed')) {
-@@ -18616,14 +18638,24 @@
+@@ -17232,14 +17254,24 @@
  
  ipcMain.handle(
    'hermes:updates:check',
@@ -70,3 +70,14 @@
  )
  
  ipcMain.handle('hermes:updates:apply', async (_event, payload) =>
+@@ -17252,6 +17284,10 @@
+ 
+ // About ▸ Updates channel selector; source checkouts only (packages bake their channel).
+ ipcMain.handle('hermes:updates:channel:set', async (_event, name: unknown): Promise<UpdaterStatusWire> => {
++  if (PACKAGE_MANAGED_RUNTIME) {
++    throw new Error(PACKAGE_MANAGED_UPDATE_MESSAGE)
++  }
++
+   assertSourceUpdateChannel(INSTALL_STAMP)
+ 
+   return resolveCheckoutUpdateStrategy().check({ force: true, setChannel: sourceChannelName(name) })
