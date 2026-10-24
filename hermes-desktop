@@ -16,14 +16,15 @@ export HERMES_DESKTOP_IS_PACKAGED=1
 export HERMES_DESKTOP_RESOURCES_PATH=/usr/lib/hermes-agent-desktop
 export HERMES_DESKTOP_PACKAGE_MANAGED_RUNTIME=1
 
-# Reuse the hermes-agent AUR package as the only local agent runtime.
+# Reuse the hermes-agent runtime package (hermes-agent-bin or hermes-agent) as the
+# only local agent runtime.
 # Do not set HERMES_DESKTOP_HERMES_ROOT to /opt — that path is read-only and
 # must not be treated as a writable checkout. The CLI wrapper owns the venv.
 if [[ -z "${HERMES_DESKTOP_HERMES:-}" ]]; then
   export HERMES_DESKTOP_HERMES=/usr/bin/hermes
 fi
 if [[ ! -x "${HERMES_DESKTOP_HERMES}" ]]; then
-  printf '%s\n' "hermes-desktop: ${HERMES_DESKTOP_HERMES} is missing or not executable. Install the hermes-agent package; this app will not bootstrap a private agent tree." >&2
+  printf '%s\n' "hermes-desktop: ${HERMES_DESKTOP_HERMES} is missing or not executable. Install hermes-agent-bin (or hermes-agent); this app will not bootstrap a private agent tree." >&2
 fi
 
 # Reuse a local browser for agent tools, not the user's browser profile.
@@ -40,5 +41,5 @@ if [[ -z "${AGENT_BROWSER_EXECUTABLE_PATH:-}" ]]; then
   printf '%s\n' 'hermes-desktop: No Chrome/Chromium found on PATH. For browser tools, install chromium or configure AGENT_BROWSER_EXECUTABLE_PATH. Browser downloads during setup are disabled.' >&2
 fi
 
-exec /usr/bin/electron42 "${flags[@]}" \
+exec /usr/bin/electron44 "${flags[@]}" \
   /usr/lib/hermes-agent-desktop/app.asar "$@"

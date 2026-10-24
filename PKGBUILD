@@ -1,17 +1,15 @@
 # Build PKGBUILD for the prebuilt hermes-agent-desktop-bin package.
-# Kept in sync with the AUR source package hermes-agent-desktop
-# (https://aur.archlinux.org/packages/hermes-agent-desktop): its patches,
-# launcher and regression tests are vendored verbatim, so the prebuilt package
-# behaves exactly like a local build of the source package. The bump job warns
-# when that package's sources or dependencies drift from these. The packaged
-# app itself is MIT-licensed (Nous Research).
+# Builds the desktop app from the upstream release tag with the patches,
+# launcher and regression tests of this repository. It replaces the AUR source
+# package hermes-agent-desktop (same install paths). The packaged app itself
+# is MIT-licensed (Nous Research).
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
 _pkgver_tag=v0.22.5
 _commit=bf0203a794a07aac3ff764972ab9087baa4e4f4e
 # Arch's Electron runtime: the major upstream locks, or a newer one (README).
-# prepare() points the vendored launcher and its test at it.
+# prepare() points the launcher and its test at it.
 _electron=electron44
 pkgver=0.22.5
 pkgrel=2
@@ -21,9 +19,9 @@ url='https://github.com/NousResearch/hermes-agent'
 license=('MIT')
 # The app runs its backend through /usr/bin/hermes from hermes-agent (or
 # hermes-agent-bin, which provides it with its version) and never installs a
-# runtime of its own. Like hermes-agent-desktop it needs a runtime of at least
-# its own version. hermes-agent's own dependencies (ffmpeg, ripgrep, browsers,
-# ...) are not repeated here.
+# runtime of its own. It needs a runtime of at least its own version.
+# hermes-agent's own dependencies (ffmpeg, ripgrep, browsers, ...) are not
+# repeated here.
 depends=(
   "${_electron}"
   "hermes-agent>=${pkgver}"
@@ -56,12 +54,12 @@ source=(
 # `python3 scripts/bump-pkgbuild.py --sync-sums`, or the build fails at
 # "Validating source files".
 sha256sums=('a8f67e5ec14fea681acef6cc7ff1553f002bb6101fd2df22bfdd4b7eecc54eb2'
-            '19c1f67e0b24d86d9c61237f9c05a02b66ca34a8467c298a2423d5a39106c0c4'
+            'f0d986b97c5c329af7bd8cd60018a899ced4d202d1859551b868d1ccdd4dd7ec'
             '412ad7b2b6bc5149a8d236ad2cb9be54d2ac0ab78dbd3c8e16deb4f4e683713f'
-            'cf8b625b00e606b5b135bf5a38a851d8a699c819139e6720eecfa043ba886e9b'
+            'ac4077eb2846f90d36858c69d8fe99988606caa0059e85a9606273bb7bc29077'
             '78a8d2d455a28d0a6da1b63a69c8fbd1a75ac90502818ce9c8d43f2dab18576a'
-            '8a677666d7d20578a88a745d83b4a75412a55fd5c184fd4f66a50dfe66adb3c6'
-            '202e474fda5fd845f1ba334e503e751f746fb7d1f378fb0d3e8142b4795a025b')
+            '194cb7b1eb8d002b829075c1c85065b2e0a1ff59f2c4a2dc869315301a75da42'
+            '4b80f0d97e93a24f030a75a8b425db1315888a9ddaa7c0077c7e0401ddf58522')
 
 # NOTE: ${srcdir} is empty at the top level of a PKGBUILD — makepkg only sets
 # it inside the function scope of prepare()/build()/package(). Computing the
@@ -82,9 +80,9 @@ _set_npm_env() {
 prepare() {
   cd "$(_extract_dir)"
   _set_npm_env
-  # The launcher and its test come verbatim from hermes-agent-desktop, which
-  # names its own Electron runtime. sed -i replaces makepkg's symlinks with
-  # edited copies; the repository files stay as they are.
+  # The launcher and its test name an Electron runtime. Point them at
+  # _electron, so a runtime switch only edits that variable. sed -i replaces
+  # makepkg's symlinks with edited copies; the repository files stay as they are.
   sed -i -E "s|/usr/bin/electron[0-9]+|/usr/bin/${_electron}|g" \
     "${srcdir}/hermes-desktop" "${srcdir}/launcher.test.cjs"
   if ! grep -q "^exec /usr/bin/${_electron} " "${srcdir}/hermes-desktop"; then

@@ -6,13 +6,18 @@ This repository contains packaging automation for the upstream Hermes Agent
 desktop app:
 
 - `PKGBUILD` / `aur/PKGBUILD` — recipes, no application code
+- `*.patch`, `hermes-desktop`, `launcher.test.cjs` — the patches applied to
+  the upstream app (package-managed runtime, HUD helper flags, window
+  opacity), the launcher and its test
 - `.github/workflows/build.yml` — CI pipeline (bump, plan, build, smoke,
   release, aur-sync)
 - `scripts/` — bump automation
 
 The packaged application itself lives at
 https://github.com/NousResearch/hermes-agent — report application
-vulnerabilities there.
+vulnerabilities there. A way around the patched guards (the in-app updater,
+its channel switch or the first-run bootstrap writing an agent tree) is a bug
+of this package: report it here.
 
 ## Supply-chain notes
 
@@ -27,11 +32,9 @@ vulnerabilities there.
   secrets they cannot. AUR keys are not per package: the key can push to every
   package of the AUR account, and `hermes-agent-bin` publishes with the same
   key, so both repositories must protect it the same way.
-- The AUR package's patches, launcher and tests are vendored from the AUR
-  source package `hermes-agent-desktop` after review; the bump job only
-  reports drift from it and never copies files automatically. Deliberate
-  divergences are listed in `scripts/bump-pkgbuild.py` (none at the moment)
-  and in the README.
+- The patches, launcher and tests live in this repository and change only
+  through reviewed pull requests. The bump job moves the upstream tag, commit
+  and checksums; it never edits these files.
 - A new version's release can take the package that the merged pull
   request's run built and smoke-tested instead of building it again on
   `main`. This only happens for a pull request from this repository whose

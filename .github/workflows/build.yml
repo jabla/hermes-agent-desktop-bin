@@ -499,7 +499,12 @@ jobs:
           # never mounted has no such elements. API: the renderer's own
           # bridge requests /api/status, which needs a gateway ticket. A
           # failure is retried for a few seconds (a gateway that is still
-          # settling), then reported.
+          # settling), then reported. Updater: the package-managed runtime
+          # refuses an update check, the channel switch and an update
+          # (package-managed-runtime.patch) instead of running upstream's
+          # checkout updater on ~/.hermes. Each call goes through
+          # Promise.resolve().then(), so a missing bridge method or a
+          # synchronous throw ends up in the same message.
           cat > /tmp/ui-probe.mjs <<'EOF'
           const port = process.argv[2]
           const page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json())
@@ -530,7 +535,18 @@ jobs:
             await new Promise(resolve => setTimeout(resolve, 2000))
           }
           console.log(api.ok ? `GET /api/status answered (${api.keys} fields)` : `GET /api/status failed: ${api.error}`)
-          process.exit(all > 0 && flex > 0 && api.ok ? 0 : 1)
+          const call = async expression => String(await evaluate(`Promise.resolve().then(() => ${expression}).then(
+            r => JSON.stringify(r ?? null), e => 'error: ' + String(e?.message ?? e))`) ?? 'no reply')
+          const packaged = 'managed by the hermes-agent system package'
+          const checked = await call('window.hermesDesktop.updates.check({ force: true })')
+          const channel = await call("window.hermesDesktop.updates.setChannel('stable')")
+          const applied = await call('window.hermesDesktop.updates.apply()')
+          const refused = checked.includes('"supported":false') && checked.includes(packaged) &&
+            channel.startsWith('error: ') && channel.includes(packaged) &&
+            applied.includes('"error":"package-managed"')
+          console.log(refused ? 'the updater refuses the check, the channel switch and the update'
+            : `the updater did not refuse: check ${checked}; channel ${channel}; update ${applied}`)
+          process.exit(all > 0 && flex > 0 && api.ok && refused ? 0 : 1)
           EOF
           probe='UI never came up'
           probe_rc=1
@@ -538,7 +554,8 @@ jobs:
           # Settings offers no translucency on Linux, yet Electron 44 applies
           # a native opacity there (NousResearch/hermes-agent#143426). Prints
           # the _NET_WM_WINDOW_OPACITY of each visible app window ("none" when
-          # it has none); fails when the display shows no app window.
+          # it has none, 4294967295 = 0xffffffff is fully opaque); fails when
+          # the display shows no app window.
           window_opacity() (
             export DISPLAY=:99 XAUTHORITY=/tmp/xvfb.auth
             found=1
@@ -607,10 +624,10 @@ jobs:
             fi
           done
           if [ "$probe_rc" -ne 0 ]; then
-            echo "SMOKE-FAIL: the window is not styled or its API call failed: $probe"
+            echo "SMOKE-FAIL: the window is not styled, its API call failed or the updater went through: $probe"
             fail
           fi
-          if [ "$opacity" != none ]; then
+          if [[ ! $opacity =~ ^(none|4294967295)( (none|4294967295))*$ ]]; then
             echo "SMOKE-FAIL: the window must be opaque, _NET_WM_WINDOW_OPACITY: $opacity"
             fail
           fi
