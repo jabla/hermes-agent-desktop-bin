@@ -6,13 +6,13 @@
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
-_pkgver_tag=v0.22.5
-_commit=bf0203a794a07aac3ff764972ab9087baa4e4f4e
+_pkgver_tag=v0.22.6
+_commit=f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab
 # Arch's Electron runtime: the major upstream locks, or a newer one (README).
 # prepare() points the launcher and its test at it.
 _electron=electron44
-pkgver=0.22.5
-pkgrel=2
+pkgver=0.22.6
+pkgrel=1
 pkgdesc="Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
 url='https://github.com/NousResearch/hermes-agent'
@@ -45,7 +45,6 @@ source=(
   'package-managed-runtime.patch'
   'package-managed-bootstrap.patch'
   'harden-hud-modifier-monitor.patch'
-  'linux-window-opacity.patch'
   'hermes-desktop'
   'launcher.test.cjs'
 )
@@ -53,13 +52,12 @@ source=(
 # the tarball sum; after editing a local file run
 # `python3 scripts/bump-pkgbuild.py --sync-sums`, or the build fails at
 # "Validating source files".
-sha256sums=('a8f67e5ec14fea681acef6cc7ff1553f002bb6101fd2df22bfdd4b7eecc54eb2'
-            'f0d986b97c5c329af7bd8cd60018a899ced4d202d1859551b868d1ccdd4dd7ec'
+sha256sums=('2add026d44c602d8b911f7ef366bd3860505e0cd124e935aa78e09fd7e814091'
+            '10568d3fd03b5511a8f2f2e9cbea6a3bd0239fe012814fe08d7c9095e6b71074'
             '412ad7b2b6bc5149a8d236ad2cb9be54d2ac0ab78dbd3c8e16deb4f4e683713f'
             'ac4077eb2846f90d36858c69d8fe99988606caa0059e85a9606273bb7bc29077'
-            '78a8d2d455a28d0a6da1b63a69c8fbd1a75ac90502818ce9c8d43f2dab18576a'
-            '194cb7b1eb8d002b829075c1c85065b2e0a1ff59f2c4a2dc869315301a75da42'
-            '4b80f0d97e93a24f030a75a8b425db1315888a9ddaa7c0077c7e0401ddf58522')
+            'cb85a2dba205970130edf4a55c6a094c6e9f64f14f62c998258e2008a50a509f'
+            '01700c07523710df165b72bbc0c2931415d118576e78868b1b02eec6bffda034')
 
 # NOTE: ${srcdir} is empty at the top level of a PKGBUILD — makepkg only sets
 # it inside the function scope of prepare()/build()/package(). Computing the
@@ -80,6 +78,11 @@ _set_npm_env() {
 prepare() {
   cd "$(_extract_dir)"
   _set_npm_env
+  # Tailwind's source scan reads the .gitignore files of the directories
+  # above when it finds no git checkout, and an AUR clone's .gitignore
+  # excludes src/: the renderer would ship without its utility classes
+  # (check() looks for them). An empty .git makes the archive its own root.
+  mkdir -p .git
   # The launcher and its test name an Electron runtime. Point them at
   # _electron, so a runtime switch only edits that variable. sed -i replaces
   # makepkg's symlinks with edited copies; the repository files stay as they are.
@@ -95,10 +98,6 @@ prepare() {
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-runtime.patch"
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/package-managed-bootstrap.patch"
   patch --batch --fuzz=0 -Np1 -i "${srcdir}/harden-hud-modifier-monitor.patch"
-  # Upstream fix for NousResearch/hermes-agent#143426, not merged yet: since
-  # Electron 44 a Linux window renders the hidden translucency default (opacity
-  # ~0.94). Drop the patch once upstream ships it (prepare() then stops here).
-  patch --batch --fuzz=0 -Np1 -i "${srcdir}/linux-window-opacity.patch"
   # Keep desktop metadata aligned with the Agent release, not the separately
   # versioned upstream desktop package.json.
   npm pkg set version=${pkgver} --prefix apps/desktop
@@ -289,8 +288,10 @@ check() {
   # Tailwind v4 skips sources that a parent directory's .gitignore excludes
   # when the build directory is no git checkout (this repository ignores
   # src/). The renderer then ships without its utility classes: the window
-  # shows unstyled text while the app itself boots fine.
-  local css=(apps/desktop/release/linux-unpacked/resources/app.asar.unpacked/dist/assets/index-*.css)
+  # shows unstyled text while the app itself boots fine. The utilities live
+  # in the stylesheet of the main chunk (index-*.css until v0.22.5, when the
+  # renderer entry was src/main.tsx).
+  local css=(apps/desktop/release/linux-unpacked/resources/app.asar.unpacked/dist/assets/main-*.css)
   if ! grep -q '\.flex{' "${css[@]}"; then
     printf 'ERROR: the renderer CSS lacks Tailwind utilities (%s) — build from a git checkout or without a parent .gitignore excluding src/\n' \
       "${css[*]##*/}"
