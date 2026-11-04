@@ -11,7 +11,7 @@ desktop app:
   opacity), the launcher and its test
 - `.github/workflows/build.yml` — CI pipeline (bump, plan, build, smoke,
   release, aur-sync)
-- `scripts/` — bump automation
+- `scripts/` — bump automation and the release-notes range
 
 The packaged application itself lives at
 https://github.com/NousResearch/hermes-agent — report application
