@@ -282,9 +282,18 @@ check() {
   # upstream adds later.
   # Absolute paths, set before the cd: apps/shared files lie outside vitest's
   # root.
-  local projects=() related=("${patched[@]/#/${PWD}/}")
+  # Upstream's update-script tests can reach the script's notification
+  # fallback (notify-send, then zenity or kdialog), which would show up in the
+  # builder's desktop session; the full suite did so. Keep vitest out of the
+  # session: no display, a dead session bus and an empty runtime directory
+  # (GDBus falls back to the bus socket there, Wayland clients to wayland-0).
+  local projects=() related=("${patched[@]/#/${PWD}/}") runtime_dir
   (( reaches_renderer )) || projects=(--project '!ui')
-  (cd apps/desktop && HERMES_PYTHON=python3 npx vitest related --run --passWithNoTests "${projects[@]}" "${related[@]}")
+  runtime_dir="$(mktemp -d)"
+  (cd apps/desktop && env -u DISPLAY -u WAYLAND_DISPLAY \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent XDG_RUNTIME_DIR="${runtime_dir}" \
+    HERMES_PYTHON=python3 npx vitest related --run --passWithNoTests "${projects[@]}" "${related[@]}")
+  rm -rf "${runtime_dir}"
 
   # Tailwind v4 skips sources that a parent directory's .gitignore excludes
   # when the build directory is no git checkout (this repository ignores
