@@ -708,22 +708,16 @@ jobs:
             echo "Release $TAG already exists, skipping"
             exit 0
           fi
-          # Previous upstream tag, for the compare link. Best effort only: never
-          # fail the release because upstream's release list looks unexpected.
-          PREV=$(gh api "repos/${UPSTREAM_REPO}/releases?per_page=100" \
-                   | python3 -c 'import json,sys; t=[r["tag_name"] for r in json.load(sys.stdin)]; c=sys.argv[1]; i=t.index(c) if c in t else -1; print(t[i+1] if 0 <= i and i+1 < len(t) else "")' "$UPSTREAM" \
-                   2>/dev/null || true)
           {
             printf 'Prebuilt Arch package `%s-%s`, re-wrapped from the upstream source tag `%s` — nothing is compiled at install time.\n\n' \
               "$PKGVER" "$PKGREL" "$UPSTREAM"
             printf -- '- [Upstream release %s](https://github.com/%s/releases/tag/%s)\n' \
               "$UPSTREAM" "$UPSTREAM_REPO" "$UPSTREAM"
-            if [ -n "$PREV" ]; then
-              printf -- '- [Upstream changes %s -> %s](https://github.com/%s/compare/%s...%s)\n' \
-                "$PREV" "$UPSTREAM" "$UPSTREAM_REPO" "$PREV" "$UPSTREAM"
-            else
-              printf -- '- [Upstream changes](https://github.com/%s/releases)\n' "$UPSTREAM_REPO"
-            fi
+            # Changes since the upstream tag of the last release here, skipped
+            # upstream versions included. Best effort: prints a generic link
+            # on any error and never fails the release.
+            python3 -I scripts/upstream-range.py "$GITHUB_REPOSITORY" "$TAG" "$UPSTREAM_REPO" "$UPSTREAM" \
+              || printf -- '- [Upstream changes](https://github.com/%s/releases)\n' "$UPSTREAM_REPO"
             printf -- '\nUpstream commit: `%s`\nArtifact sha256: `%s`\nBuilt and smoke-tested in: %s/%s/actions/runs/%s\n' \
               "$UPSTREAM_COMMIT" "$(sha256sum "$FILE" | cut -d' ' -f1)" \
               "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$BUILD_RUN"

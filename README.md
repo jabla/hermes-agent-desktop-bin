@@ -16,6 +16,7 @@ This replaces the AUR source package `hermes-agent-desktop` (they conflict, both
 - `*.patch`, `hermes-desktop`, `launcher.test.cjs` — the patches against the upstream tag, the launcher and its test (see [Runtime](#runtime)). `prepare()` points the launcher and its test at the runtime in `_electron`.
 - `aur/PKGBUILD` — the AUR *wrapper*, source of truth for [hermes-agent-desktop-bin on the AUR](https://aur.archlinux.org/packages/hermes-agent-desktop-bin). Its `source` points at the GitHub Release artifact, stored under a name that differs from the package makepkg writes; `package()` only extracts the payload.
 - `scripts/bump-pkgbuild.py` — bump automation, started by hand: detects a new upstream tag, edits both PKGBUILDs + `.SRCINFO`, opens an auto-merge PR. The PR says when upstream locks a newer Electron major than `_electron`.
+- `scripts/upstream-range.py` — the "Upstream changes" lines of the release notes: from the upstream tag of the last release here, skipped upstream releases named.
 - `scripts/check-metadata.sh` — fails the build when `PKGBUILD` and `aur/PKGBUILD` disagree on version, dependencies, provides or conflicts.
 - `.github/workflows/build.yml` — `bump` / `plan` / `build` / `smoke` / `release` / `aur-sync` pipeline.
 
