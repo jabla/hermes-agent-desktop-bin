@@ -32,6 +32,10 @@ of this package: report it here.
   secrets they cannot. AUR keys are not per package: the key can push to every
   package of the AUR account, and `hermes-agent-bin` publishes with the same
   key, so both repositories must protect it the same way.
+- The AUR source package `hermes-agent-desktop` is generated from `PKGBUILD`
+  (`aur-source/`, checked by `build`). `aur-sync` pushes it with the same key
+  only once `SOURCE_PUBLISH` is enabled in the workflow. It never pushes over
+  a commit someone else pushed there last.
 - The patches, launcher and tests live in this repository and change only
   through reviewed pull requests. The bump job moves the upstream tag, commit
   and checksums; it never edits these files.

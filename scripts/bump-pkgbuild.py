@@ -3,10 +3,12 @@
 
 Three modes:
   * default (dry run): report what a bump would change, write nothing.
-  * --pr: create branch + commit (PKGBUILD, aur/PKGBUILD, aur/.SRCINFO),
-    push it and open an auto-merge PR. Never commits to main directly.
+  * --pr: create branch + commit (PKGBUILD, aur/PKGBUILD, aur/.SRCINFO and
+    the AUR source package in aur-source/), push it and open an auto-merge
+    PR. Never commits to main directly.
   * --sync-sums: only refresh the checksums of the local source files
-    (patches, launcher, tests) in PKGBUILD after editing one of them.
+    (patches, launcher, tests) in PKGBUILD after editing one of them, and
+    aur-source/ with them.
 
 Exits 0 without changes when PKGBUILD already tracks the latest upstream tag.
 Requires: gh (GH_TOKEN + GH_REPO env), makepkg available for .SRCINFO regen,
@@ -233,6 +235,16 @@ def electron_lag(tag: str, tarball: bytes) -> list[str]:
     return [line]
 
 
+def regen_source_package() -> int:
+    """Rewrite aur-source/, the AUR source package, from PKGBUILD."""
+    r = run([sys.executable, "-I", "scripts/source-package.py"])
+    if r.returncode != 0:
+        print("source-package.py failed:", r.stdout, r.stderr)
+        return 1
+    print(r.stdout.strip())
+    return 0
+
+
 def gh(args: list[str]) -> subprocess.CompletedProcess:
     return run(["gh", *args])
 
@@ -252,7 +264,7 @@ def main() -> int:
             print("source checksum refreshed:", line)
         if not changed:
             print("local source checksums are current")
-        return 0
+        return regen_source_package()
 
     require_non_root()
 
@@ -321,6 +333,8 @@ def main() -> int:
         print("source checksum refreshed:", line)
     edit_aur_pkgbuild("aur/PKGBUILD", version, pkgrel)
     regen_srcinfo("aur")
+    if regen_source_package():
+        return 1
 
     branch = f"bump/{tag}"
     gh_repo = os.environ["GH_REPO"]
@@ -331,7 +345,7 @@ def main() -> int:
     run(["git", "checkout", "-B", branch])
     run(["git", "config", "user.email", "jabla@users.noreply.github.com"])
     run(["git", "config", "user.name", "hermes-agent-desktop-bin CI"])
-    run(["git", "add", "PKGBUILD", "aur/PKGBUILD", "aur/.SRCINFO"])
+    run(["git", "add", "PKGBUILD", "aur/PKGBUILD", "aur/.SRCINFO", "aur-source"])
     r = run(["git", "commit", "-m", f"chore: bump to {tag} (v{full_version})"])
     if r.returncode != 0:
         print("commit failed:", r.stderr)
