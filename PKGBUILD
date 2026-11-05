@@ -1,8 +1,9 @@
 # Build PKGBUILD for the prebuilt hermes-agent-desktop-bin package.
 # Builds the desktop app from the upstream release tag with the patches,
-# launcher and regression tests of this repository. It replaces the AUR source
-# package hermes-agent-desktop (same install paths). The packaged app itself
-# is MIT-licensed (Nous Research).
+# launcher and regression tests of this repository. The AUR source package
+# hermes-agent-desktop is generated from it (scripts/source-package.py writes
+# aur-source/) and uses the same install paths. The packaged app itself is
+# MIT-licensed (Nous Research).
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
