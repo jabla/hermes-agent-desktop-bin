@@ -191,18 +191,64 @@ def regen_srcinfo(aur_dir: str):
 ELECTRON_VAR_RE = re.compile(r"""(?m)^_electron=['"]?electron(\d+)\b""")
 ARCH_SEARCH = "https://archlinux.org/packages/search/json/?name="
 
+# pnpm as PKGBUILD downloads it (source_x86_64=()): the linux-x64 artifacts of
+# upstream's pin in pm/lock.json, the @pnpm/exe executable, then the launcher
+# package.
+PNPM_URLS = ("https://registry.npmjs.org/@pnpm/exe.linux-x64/-/exe.linux-x64-{v}.tgz",
+             "https://registry.npmjs.org/pnpm/-/pnpm-{v}.tgz")
+PNPM_VAR_RE = re.compile(r"(?m)^_pnpmver=(\S+)")
+PNPM_SUMS_RE = re.compile(r"(?ms)^sha256sums_x86_64=\(.*?\)")
+
+
+def tarball_file(tarball: bytes, name: str) -> bytes:
+    """A file of upstream's archive, by its path below the top directory."""
+    with tarfile.open(fileobj=io.BytesIO(tarball)) as tar:
+        for member in tar:
+            if member.isfile() and member.name.partition("/")[2] == name:
+                return tar.extractfile(member).read()
+    raise KeyError(f"the upstream archive has no {name}")
+
+
+def pnpm_pin(tarball: bytes) -> tuple[str, list[str]]:
+    """Upstream's pnpm pin (pm/lock.json): its version and the sha256 digests
+    of the two linux-x64 artifacts, in source_x86_64=() order."""
+    pin = json.loads(tarball_file(tarball, "pm/lock.json"))["packages"]["pnpm"]
+    version = pin["version"]
+    sums = {a["url"]: a["sha256"] for a in pin["artifacts"]["linux-x64"]}
+    urls = [url.format(v=version) for url in PNPM_URLS]
+    if sorted(sums) != sorted(urls):
+        sys.exit(f"pm/lock.json pins pnpm {version} as {sorted(sums)}, "
+                 f"PKGBUILD downloads {urls}")
+    return version, [sums[url] for url in urls]
+
+
+def edit_pnpm(path: str, version: str, sums: list[str]):
+    """Write upstream's pnpm pin into PKGBUILD (_pnpmver, sha256sums_x86_64)."""
+    pkg = open(path).read()
+    pkg, n = PNPM_VAR_RE.subn(f"_pnpmver={version}", pkg)
+    block = "sha256sums_x86_64=(" + "\n                   ".join(f"'{s}'" for s in sums) + ")"
+    pkg, m = PNPM_SUMS_RE.subn(lambda _m: block, pkg)
+    if n != 1 or m != 1:
+        sys.exit(f"cannot write the pnpm pin into {path} "
+                 f"({n} _pnpmver= lines, {m} sha256sums_x86_64= arrays)")
+    open(path, "w").write(pkg)
+
 
 def locked_electron(tarball: bytes) -> str:
     """The Electron version upstream's lockfile installs for apps/desktop,
-    the one prepare() compares with the system runtime."""
-    with tarfile.open(fileobj=io.BytesIO(tarball)) as tar:
-        member = next(m for m in tar
-                      if m.name.count("/") == 1 and m.name.endswith("/package-lock.json"))
-        packages = json.load(tar.extractfile(member))["packages"]
-    for path in ("apps/desktop/node_modules/electron", "node_modules/electron"):
-        if path in packages:
-            return packages[path]["version"]
-    raise KeyError("package-lock.json installs no electron")
+    the one prepare() compares with the system runtime. pnpm writes the
+    importers of pnpm-lock.yaml in a fixed shape (two-space indent, one key
+    per line); the version may carry a peer suffix: 44.9.3(supports-color@...)."""
+    text = tarball_file(tarball, "pnpm-lock.yaml").decode()
+    importers = text.partition("\nimporters:\n")[2]
+    desktop = re.search(r"(?ms)^  apps/desktop:\n(.*?)(?=^ ? ?\S|\Z)", importers)
+    if not desktop:
+        raise KeyError("pnpm-lock.yaml has no importer apps/desktop")
+    locked = re.search(r"(?m)^      electron:\n        specifier: .*\n        version: ([0-9][^\s(]*)",
+                       desktop.group(1))
+    if not locked:
+        raise KeyError("pnpm-lock.yaml installs no electron for apps/desktop")
+    return locked.group(1)
 
 
 def electron_lag(tag: str, tarball: bytes) -> list[str]:
@@ -305,6 +351,10 @@ def main() -> int:
     checksum = hashlib.sha256(tarball).hexdigest()
     print(f"upstream tag={tag} version={version} pkgrel={pkgrel} commit={commit} "
           f"sha256={checksum}")
+    pnpm_version, pnpm_sums = pnpm_pin(tarball)
+    cur_pnpm = PNPM_VAR_RE.search(pkg).group(1)
+    pnpm_move = f"pnpm pin {cur_pnpm} -> {pnpm_version}" if pnpm_version != cur_pnpm else ""
+    print(f"upstream pins pnpm {pnpm_version}" + (f": {pnpm_move}" if pnpm_move else ", as PKGBUILD"))
     electron = electron_lag(tag, tarball)
 
     if not args.pr:
@@ -329,6 +379,7 @@ def main() -> int:
         return 0
 
     edit_pkgbuild("PKGBUILD", tag, version, commit, checksum, pkgrel)
+    edit_pnpm("PKGBUILD", pnpm_version, pnpm_sums)
     for line in sync_local_source_sums("PKGBUILD"):
         print("source checksum refreshed:", line)
     edit_aur_pkgbuild("aur/PKGBUILD", version, pkgrel)
@@ -361,6 +412,8 @@ def main() -> int:
     body = (f"Automated bump to upstream [release {tag}]"
             f"(https://github.com/{REPO}/releases/tag/{tag}).\n\n"
             "Build + smoke run as required checks; auto-merge after green.")
+    if pnpm_move:
+        body += f"\n\nFollows upstream's {pnpm_move} (pm/lock.json)."
     if electron:
         body += "\n\n**Electron** (the build stops until this is done):\n" + "\n".join(
             f"- {line}" for line in electron)
