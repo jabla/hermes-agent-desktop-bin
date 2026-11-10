@@ -176,9 +176,18 @@ prepare() {
   fi
 
   # The virtual store's files are hard links into pnpm's store: replace,
-  # never write through them.
+  # never write through them. Upstream's `--dir` packaging copies this
+  # runtime instead of downloading one: it refuses links that leave dist/
+  # (apps/desktop/scripts/prepared-packaging.mjs) and admits only a
+  # dist/version that names the locked Electron
+  # (scripts/build/electron-runtime.mjs). So dist/ is a real copy of Arch's
+  # files, and only that version file names the lock. package() keeps none
+  # of the staged Electron; the launcher runs _electron.
   rm -rf "${electron_dir}/dist" "${electron_dir}/path.txt"
-  ln -s "/usr/lib/${_electron}" "${electron_dir}/dist"
+  mkdir "${electron_dir}/dist"
+  cp -r "/usr/lib/${_electron}/." "${electron_dir}/dist/"
+  rm "${electron_dir}/dist/version"
+  printf '%s\n' "${locked_electron}" > "${electron_dir}/dist/version"
   printf '%s' 'electron' > "${electron_dir}/path.txt"
   test -x "${electron_dir}/dist/electron"
 
