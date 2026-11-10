@@ -322,8 +322,8 @@ jobs:
       # hermes-agent). Pin the one the AUR ships, never one older than the
       # desktop version: users run the app on that runtime. Change version
       # and checksum together.
-      RUNTIME_VER: 0.23.0-1
-      RUNTIME_SUM: fcccb68d215fdc5c1c033be56af03ec8d2a04c376da61d8b63a88bcd79d1e658
+      RUNTIME_VER: 0.23.1-1
+      RUNTIME_SUM: 7728f439ae063f4dae7658c5fd44482cc7ccfb1052d9e00a720713e4a688ac03
     steps:
       # Runtime dependencies are deliberately not preinstalled: pacman -U has
       # to resolve them from the packages' own depends=().
