@@ -617,7 +617,10 @@ jobs:
             echo "SMOKE-FAIL: packaged install stamp ${stamp} was not loaded"
             fail
           fi
+          # The default-plugins preflight runs through the agent launcher's
+          # --run-module and skips, since lazy installs are off.
           for line in 'Using existing Hermes CLI at /usr/bin/hermes' \
+                      '[default-plugins] exit=4 {"state":"skipped"' \
                       'Hermes gateway is ready' \
                       "$ui"; do
             if ! grep -qF "$line" /tmp/hermes-desktop.log; then
