@@ -276,7 +276,7 @@ def electron_lag(tag: str, tarball: bytes) -> list[str]:
         arch = f"Arch package lookup failed: {exc}"
     line = (f"upstream {tag} locks Electron {locked}, newer than electron{ours}: "
             f"prepare() stops on it ({arch}). Move _electron and the aur/PKGBUILD "
-            f"dependency to electron{major} (README, Electron)")
+            f"dependency to electron{major}")
     print(f"::warning title=Electron::{line}")
     return [line]
 
