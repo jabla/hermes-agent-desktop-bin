@@ -7,14 +7,14 @@
 pkgname=hermes-agent-desktop-bin
 _pkgname=hermes-desktop          # /usr/bin launcher name (AUR convention, lowercase)
 _upstream=Hermes                 # productName + executableName
-_pkgver_tag=v0.23.4
-_commit=8fc0374447313e276f6b9a2764bfc750190c966a
+_pkgver_tag=v0.23.5
+_commit=a428f5344f777ccafe389c79d5b09384abef1437
 # Arch's Electron runtime: the major upstream locks, or a newer one (README).
 # prepare() points the launcher and its test at it.
 _electron=electron44
 # pm's pnpm pin (pm/lock.json); prepare() stops when it moves.
 _pnpmver=12.15.0
-pkgver=0.23.4
+pkgver=0.23.5
 pkgrel=1
 pkgdesc="Hermes Agent desktop app from Nous Research — chat, voice, file browser, and settings UI for the local agent runtime (prebuilt binary, CI-built)"
 arch=('x86_64')
@@ -55,7 +55,7 @@ source=(
 # the tarball sum; after editing a local file run
 # `python3 scripts/bump-pkgbuild.py --sync-sums`, or the build fails at
 # "Validating source files".
-sha256sums=('875e633ae5b3c6349c1bcffc18c0476518fbe5dead355e4aa09ad827ebffce0c'
+sha256sums=('4475ee948e831245b11a339fa08811ab471bd487ee503c7b31bc3200493820b8'
             '10568d3fd03b5511a8f2f2e9cbea6a3bd0239fe012814fe08d7c9095e6b71074'
             '412ad7b2b6bc5149a8d236ad2cb9be54d2ac0ab78dbd3c8e16deb4f4e683713f'
             'ac4077eb2846f90d36858c69d8fe99988606caa0059e85a9606273bb7bc29077'
