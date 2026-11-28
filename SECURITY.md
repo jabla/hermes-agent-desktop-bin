@@ -7,11 +7,12 @@ desktop app:
 
 - `PKGBUILD` / `aur/PKGBUILD` — recipes, no application code
 - `*.patch`, `hermes-desktop`, `launcher.test.cjs` — the patches applied to
-  the upstream app (package-managed runtime, HUD helper flags, window
-  opacity), the launcher and its test
+  the upstream app (package-managed runtime and bootstrap, HUD helper
+  flags), the launcher and its test
 - `.github/workflows/build.yml` — CI pipeline (bump, plan, build, smoke,
   release, aur-sync)
-- `scripts/` — bump automation and the release-notes range
+- `scripts/` — bump automation, the AUR source package, the metadata check
+  and the release-notes range
 
 The packaged application itself lives at
 https://github.com/NousResearch/hermes-agent — report application
@@ -53,5 +54,5 @@ of this package: report it here.
 ## Reporting
 
 To report a security issue in this repository's automation, open a private
-vulnerability report via GitHub: *Issues → New issue → Report a security
-vulnerability* (or contact the maintainer through the AUR package page).
+vulnerability report with *Report a vulnerability* on the repository's
+*Security* tab (or contact the maintainer through the AUR package page).
